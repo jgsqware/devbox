@@ -1,0 +1,29 @@
+# devbox — ~/.bashrc
+#
+# Dérivé de `default/bashrc` d'Omarchy, adapté au moteur VENDORÉ : sur un vrai
+# poste Omarchy, c'est le paquet `omarchy` qui pose /usr/share/omarchy et
+# /etc/skel/.bashrc. Ici on ne l'installe pas (121 Mo de deps graphiques), donc
+# on rétablit la même chaîne en pointant sur ~/.local/share/omarchy.
+#
+# ⛔ NE RIEN ÉDITER ICI : ce fichier est redéployé depuis le dépôt devbox.
+#    Les ajouts vont dans ~/.config/devbox/rc.d/ (overlay/bash/rc.d/).
+
+export OMARCHY_PATH="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
+
+case ":$PATH:" in
+  *":$OMARCHY_PATH/bin:"*) ;;
+  *) export PATH="$OMARCHY_PATH/bin:$PATH" ;;
+esac
+
+# Non interactif : on s'arrête ici (OMARCHY_PATH et PATH sont posés).
+[[ $- != *i* ]] && return
+
+# La chaîne Omarchy : envs · shell · aliases · functions · init
+# (init = mise, starship, zoxide, fzf) · inputrc
+[[ -r "$OMARCHY_PATH/default/bash/rc" ]] && source "$OMARCHY_PATH/default/bash/rc"
+
+# Overrides devbox — chargés EN DERNIER, dans l'ordre des noms.
+for _devbox_rc in "$HOME"/.config/devbox/rc.d/*.sh; do
+  [[ -r "$_devbox_rc" ]] && source "$_devbox_rc"
+done
+unset _devbox_rc

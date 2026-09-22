@@ -1,0 +1,3 @@
+# devbox — ~/.bash_profile
+# WSL et ssh lancent un shell de LOGIN, qui ne lit pas ~/.bashrc tout seul.
+[[ -f ~/.bashrc ]] && . ~/.bashrc

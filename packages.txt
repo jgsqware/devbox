@@ -1,0 +1,66 @@
+# devbox — liste écrémée (réf. analyse §10.3 + §11.9)
+# 45 paquets, ZÉRO AUR. Seuls 3 viennent du dépôt [omarchy].
+# Tout ajout ici se propage à tous les nœuds : c'est la source de vérité.
+
+# --- socle ---------------------------------------------------------------
+bash-completion
+diffutils             # cmp/diff — absents d'une Arch nue
+less
+man-db
+unzip
+inetutils
+whois
+socat
+
+# --- navigation ----------------------------------------------------------
+bat
+eza
+fd
+fzf
+ripgrep
+zoxide
+plocate
+jq
+gum
+dua-cli
+tldr
+
+# --- git / dev -----------------------------------------------------------
+git
+lazygit
+tree-sitter-cli
+clang
+llvm
+lua51
+luarocks
+glab
+
+# --- éditeur -------------------------------------------------------------
+neovim
+omarchy-nvim          # dépôt [omarchy]
+
+# --- session -------------------------------------------------------------
+tmux
+zellij
+starship
+btop
+fastfetch
+
+# --- conteneurs ----------------------------------------------------------
+docker
+docker-buildx
+docker-compose
+lazydocker
+
+# --- toolchain -----------------------------------------------------------
+mise-bin              # dépôt [omarchy]
+usage
+fakeroot
+pacman-contrib
+expac
+yay                   # dépôt [omarchy]
+
+# --- secrets / réseau ----------------------------------------------------
+1password-cli
+tailscale
+ufw                   # auto-skippé sur WSL (pas de netfilter persistant)
