@@ -66,6 +66,7 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `overlay/bash/bash_profile` | `~/.bash_profile` (WSL et ssh lancent un shell de login) |
 | `overlay/bash/rc.d/*.sh` | **les réglages shell** — déposés dans `~/.config/devbox/rc.d/` |
 | `overlay/omarchy/themed/*.tpl` | cibles de thème supplémentaires (zellij) |
+| `overlay/terminfo/xterm-ghostty.terminfo` | entrée terminfo Ghostty, compilée par `tic` à l'étape ⑦ |
 
 ## D'où vient le prompt
 
@@ -131,6 +132,14 @@ intact.
   `omarchy-nvim`, `mise-bin`, `yay`).
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
+- 🖥️ **Terminfo Ghostty** (`TERM=xterm-ghostty`) : Ghostty ne publie pas cette
+  entrée en tant que source (générée à sa compilation), et `ghostty-terminfo`
+  chez `[omarchy]` n'existe qu'en `ARCH=x86_64` alors que son contenu (juste
+  des séquences d'échappement) est portable. Vendorée telle quelle
+  (`infocmp -x xterm-ghostty`, régénérable depuis n'importe quel poste Ghostty)
+  dans `overlay/terminfo/`, compilée par `tic` à l'étape ⑦ — sans ça, SSH
+  depuis un client Ghostty vers cette machine plante avec
+  `missing or unsuitable terminal: xterm-ghostty`.
 - 🌐 Le bootstrap sort sur **internet direct** (`pkgs.omarchy.org`), pas sur la tailnet.
   Tailscale est la **dernière** étape — sauf egress filtré, où il devient la première
   (exit node).

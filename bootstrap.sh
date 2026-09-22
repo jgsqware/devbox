@@ -751,6 +751,21 @@ do_shell() {
     n=$((n+1))
   done
   ok "$n configs installées (starship.toml, tmux, lazygit, btop, git)"
+
+  # terminfo Ghostty (TERM=xterm-ghostty) : Ghostty ne le publie pas en tant
+  # que source (généré à sa compilation) et [omarchy] ne le publie qu'en
+  # ARCH=x86_64 alors que le contenu est 100% portable (juste des séquences
+  # d'échappement) — vendoré dans overlay/terminfo/, compilé ici avec tic.
+  # Sans ça : `missing or unsuitable terminal: xterm-ghostty` en SSH depuis
+  # un client Ghostty vers cette machine.
+  local ti_src="$OVERLAY_DIR/terminfo/xterm-ghostty.terminfo"
+  if [[ -r "$ti_src" ]] && has tic && ! infocmp xterm-ghostty >/dev/null 2>&1; then
+    if asroot tic -x -o /usr/share/terminfo "$ti_src"; then
+      ok "terminfo xterm-ghostty installé (/usr/share/terminfo)"
+    else
+      warn "tic a échoué sur $ti_src — TERM=xterm-ghostty restera cassé en SSH"
+    fi
+  fi
 }
 
 # ============================================================== ⑧ thème =====
