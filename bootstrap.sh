@@ -29,6 +29,8 @@ START_DIR="${DEVBOX_START_DIR:-}"                      # vide = $HOME ; "keep" =
 TS_HOSTNAME="${DEVBOX_HOSTNAME:-$(hostname -s 2>/dev/null || echo devbox)}"
 HOSTNAME_SET=0                                         # 1 = hostname demandé explicitement
 [[ -n "${DEVBOX_HOSTNAME:-}" ]] && HOSTNAME_SET=1
+ARCH="$(uname -m)"                                     # [omarchy] ne publie omarchy-keyring/
+                                                        # omarchy-nvim/yay qu'en x86_64
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/devbox"
 BACKUP_DIR="$STATE_DIR/backup/$(date +%Y%m%d-%H%M%S)"
@@ -409,14 +411,20 @@ do_repo() {
     # ŒUF/POULE : le dépôt est signé mais son keyring est DANS le dépôt.
     # SigLevel = Never le temps d'un -Sy, puis on referme.
     asrootsh "printf '\n# devbox\n[omarchy]\nSigLevel = Never\nServer = $OMARCHY_REPO_URL\n' >> /etc/pacman.conf"
-    asroot pacman -Sy --noconfirm omarchy-keyring
-    asroot pacman-key --populate omarchy
-    asrootsh "sed -i '/^\[omarchy\]/,\$ s/^SigLevel = Never\$/SigLevel = Required DatabaseOptional/' /etc/pacman.conf"
-    asroot pacman -Sy
-    ok "dépôt [omarchy] ajouté et refermé (SigLevel = Required DatabaseOptional)"
+    if asroot pacman -Sy --noconfirm omarchy-keyring; then
+      asroot pacman-key --populate omarchy
+      asrootsh "sed -i '/^\[omarchy\]/,\$ s/^SigLevel = Never\$/SigLevel = Required DatabaseOptional/' /etc/pacman.conf"
+      asroot pacman -Sy
+      ok "dépôt [omarchy] ajouté et refermé (SigLevel = Required DatabaseOptional)"
+    else
+      warn "omarchy-keyring absent pour $ARCH — [omarchy] ne publie de paquets signés qu'en x86_64.
+  Dépôt gardé en SigLevel = Never (non vérifié, mais servi en HTTPS par pkgs.omarchy.org).
+  omarchy-nvim et yay seront indisponibles ici (repli auto en ③) ; mise-bin l'est en général."
+      asroot pacman -Sy
+    fi
   fi
 
-  if ! (( DRY_RUN )); then
+  if ! (( DRY_RUN )) && [[ "$ARCH" == "x86_64" ]]; then
     grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required' \
       || warn "le dépôt [omarchy] est encore en SigLevel = Never — à refermer à la main"
   fi
@@ -430,13 +438,18 @@ pkg_list() {
 
 do_packages() {
   step "③" "Paquets"
-  local pkgs=() dropped=() p
+  local pkgs=() dropped=() dropped_arch=() p
   while read -r p; do
     if [[ "$p" == "ufw" ]] && is_wsl; then dropped+=("$p"); continue; fi
+    if [[ "$ARCH" != "x86_64" && ( "$p" == "omarchy-nvim" || "$p" == "yay" ) ]]; then
+      dropped_arch+=("$p"); continue
+    fi
     pkgs+=("$p")
   done < <(pkg_list)
 
   (( ${#dropped[@]} )) && info "skippés sur WSL : ${dropped[*]} (pas de netfilter persistant)"
+  (( ${#dropped_arch[@]} )) && warn "skippés sur $ARCH (non publiés par [omarchy] hors x86_64) : ${dropped_arch[*]}
+  → neovim (déjà dans la liste) remplace omarchy-nvim ; zéro AUR donc pas de repli pour yay."
   info "${#pkgs[@]} paquets demandés"
 
   asroot pacman -S --needed --noconfirm "${pkgs[@]}" \

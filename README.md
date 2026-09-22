@@ -134,6 +134,11 @@ intact.
 - 🌐 Le bootstrap sort sur **internet direct** (`pkgs.omarchy.org`), pas sur la tailnet.
   Tailscale est la **dernière** étape — sauf egress filtré, où il devient la première
   (exit node).
+- 🅿️ **aarch64 (ARM)** : `[omarchy]` n'y publie **ni `omarchy-keyring` ni `omarchy-nvim`
+  ni `yay`** (x86_64 seulement — `mise-bin` reste dispo). Le script le détecte
+  (`uname -m`), garde le dépôt en `SigLevel = Never` et saute ces 2 paquets au lieu
+  de mourir sur `target not found`. `neovim` (dans la liste de base) prend le relais ;
+  pas de repli pour `yay` vu la règle zéro-AUR.
 
 ## Référence
 
