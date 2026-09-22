@@ -436,6 +436,19 @@ do_repo() {
     ok "keyring Arch déjà initialisé"
   fi
 
+  # nettoyage d'un run précédent : [omarchy-any] (repli par second dépôt,
+  # abandonné car pacman réclame toujours <section>.db — jamais synchronisable)
+  # a pu être écrit par une version antérieure de ce script.
+  if grep -q '^\[omarchy-any\]' /etc/pacman.conf 2>/dev/null; then
+    asrootsh "awk '
+      /^# devbox \(repli/ {skip=1}
+      /^\[omarchy-any\]/  {skip=1}
+      skip && /^\[/ && \$0 !~ /^\[omarchy-any\]/ {skip=0}
+      !skip
+    ' /etc/pacman.conf > /etc/pacman.conf.devbox-tmp && mv /etc/pacman.conf.devbox-tmp /etc/pacman.conf"
+    warn "[omarchy-any] (résidu d'un run précédent, jamais synchronisable) retiré de /etc/pacman.conf"
+  fi
+
   local need_sync=0
   if grep -q '^\[omarchy\]' /etc/pacman.conf 2>/dev/null; then
     ok "dépôt [omarchy] déjà déclaré"
