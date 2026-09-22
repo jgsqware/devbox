@@ -438,18 +438,18 @@ pkg_list() {
 
 do_packages() {
   step "③" "Paquets"
-  local pkgs=() dropped=() dropped_arch=() p
+  local pkgs=() dropped=() unavailable=() p
   while read -r p; do
     if [[ "$p" == "ufw" ]] && is_wsl; then dropped+=("$p"); continue; fi
-    if [[ "$ARCH" != "x86_64" && ( "$p" == "omarchy-nvim" || "$p" == "yay" ) ]]; then
-      dropped_arch+=("$p"); continue
-    fi
+    # certains paquets (surtout ceux de [omarchy]) n'existent qu'en x86_64 —
+    # on vérifie contre les dépôts synchronisés plutôt que de figer une liste.
+    if ! pacman -Si "$p" >/dev/null 2>&1; then unavailable+=("$p"); continue; fi
     pkgs+=("$p")
   done < <(pkg_list)
 
   (( ${#dropped[@]} )) && info "skippés sur WSL : ${dropped[*]} (pas de netfilter persistant)"
-  (( ${#dropped_arch[@]} )) && warn "skippés sur $ARCH (non publiés par [omarchy] hors x86_64) : ${dropped_arch[*]}
-  → neovim (déjà dans la liste) remplace omarchy-nvim ; zéro AUR donc pas de repli pour yay."
+  (( ${#unavailable[@]} )) && warn "indisponibles pour $ARCH (absents de core/extra/[omarchy]) : ${unavailable[*]}
+  → à installer/remplacer à la main si besoin (AUR proscrit ici)."
   info "${#pkgs[@]} paquets demandés"
 
   asroot pacman -S --needed --noconfirm "${pkgs[@]}" \

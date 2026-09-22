@@ -134,11 +134,12 @@ intact.
 - 🌐 Le bootstrap sort sur **internet direct** (`pkgs.omarchy.org`), pas sur la tailnet.
   Tailscale est la **dernière** étape — sauf egress filtré, où il devient la première
   (exit node).
-- 🅿️ **aarch64 (ARM)** : `[omarchy]` n'y publie **ni `omarchy-keyring` ni `omarchy-nvim`
-  ni `yay`** (x86_64 seulement — `mise-bin` reste dispo). Le script le détecte
-  (`uname -m`), garde le dépôt en `SigLevel = Never` et saute ces 2 paquets au lieu
-  de mourir sur `target not found`. `neovim` (dans la liste de base) prend le relais ;
-  pas de repli pour `yay` vu la règle zéro-AUR.
+- 🅿️ **aarch64 (ARM)** : `[omarchy]` ne publie **pas de `omarchy-keyring`** hors x86_64
+  → dépôt gardé en `SigLevel = Never` (détection `uname -m`). Certains paquets de
+  `packages.txt` (`omarchy-nvim`, `yay`, `1password-cli`, …) n'existent pas non plus
+  pour cette arch : l'étape ③ les vérifie un par un via `pacman -Si` et les saute avec
+  un `warn` au lieu de faire échouer tout le lot — pas de repli auto (zéro AUR), à
+  installer/remplacer à la main si besoin.
 
 ## Référence
 
