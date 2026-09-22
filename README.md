@@ -137,13 +137,15 @@ intact.
 - 🅿️ **aarch64 (ARM)** : `omarchy-keyring` et `omarchy-nvim` sont des paquets
   **`ARCH=any`** (zéro binaire compilé — clés GPG + config LazyVim vendorée) mais
   Omarchy ne les mirrore que dans son arbre `x86_64` : trou de publication, pas
-  une contrainte technique. L'étape ② ajoute alors un second dépôt
-  `[omarchy-any]` pointé en dur sur `.../x86_64` — pacman refuse de lui-même
-  tout paquet réellement x86_64 dessus (`yay`, `1password-cli`…), seuls les
-  paquets `any` en profitent — et referme normalement en `SigLevel = Required`.
-  Ce qui reste vraiment indisponible (`yay`, `1password-cli`, vrais binaires
-  x86_64) est détecté par l'étape ③ via `pacman -Si` et sauté avec un `warn` —
-  pas de repli auto (zéro AUR), à installer/remplacer à la main si besoin.
+  une contrainte technique. Impossible de déclarer un second dépôt pacman pour
+  ça (pacman réclame toujours `<nom-de-section>.db`, jamais `omarchy.db` sous
+  un autre nom → 404 garanti). `fetch_any_pkg` va donc chercher l'entrée exacte
+  dans la base `x86_64`, **vérifie `%ARCH% == any`** puis extrait le paquet
+  directement (pas de `.INSTALL`, pas d'entrée dans la db pacman — pour le
+  keyring, le seul rôle du `.INSTALL` est le `pacman-key --populate` déjà fait
+  à la main juste après). Un vrai binaire x86_64 (`yay`, `1password-cli`) est
+  rejeté par ce même garde-fou et retombe dans le `warn` d'indisponibilité de
+  l'étape ③ — pas de repli auto (zéro AUR), à installer/remplacer à la main.
 
 ## Référence
 

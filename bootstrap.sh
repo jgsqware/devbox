@@ -98,6 +98,41 @@ is_wsl()   { grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; }
 stamped()  { [[ -f "$STATE_DIR/stamp.$1" ]]; }
 stamp()    { (( DRY_RUN )) || { mkdir -p "$STATE_DIR"; date -Iseconds > "$STATE_DIR/stamp.$1"; }; }
 
+# pacman construit toujours <server>/<nom-de-section>.db : impossible de faire
+# pointer un dépôt nommé "omarchy-any" sur le omarchy.db distant (404 garanti).
+# Pour un paquet [omarchy] ARCH=any absent de l'arbre local (Omarchy ne les
+# mirrore que sous x86_64 — trou de publication, zéro binaire dedans), on va
+# donc chercher l'entrée exacte dans la base x86_64 et on récupère le fichier
+# directement par URL. Écrit le chemin local sur stdout, ou renvoie 1 :
+# refuse tout paquet dont %ARCH% n'est pas "any" (protège des vrais binaires
+# x86_64 comme yay/1password-cli, qui ne doivent jamais atterrir sur ARM).
+fetch_any_pkg() {
+  local pkg="$1" cache="$STATE_DIR/cache"
+  mkdir -p "$cache" 2>/dev/null
+  local db="$cache/omarchy-x86_64.db"
+  [[ -f "$db" ]] || curl -fsSL --max-time 30 \
+    "https://pkgs.omarchy.org/${OMARCHY_CHANNEL}/x86_64/omarchy.db" -o "$db" 2>/dev/null || return 1
+  local dirent desc arch_val fname
+  dirent="$(tar --zstd -tf "$db" 2>/dev/null | grep -E "^${pkg}-[^/]+/\$" | head -1)"
+  [[ -n "$dirent" ]] || return 1
+  desc="$(tar --zstd -xOf "$db" "${dirent}desc" 2>/dev/null)"
+  arch_val="$(printf '%s\n' "$desc" | awk '/^%ARCH%$/{getline; print; exit}')"
+  [[ "$arch_val" == "any" ]] || return 1
+  fname="$(printf '%s\n' "$desc" | awk '/^%FILENAME%$/{getline; print; exit}')"
+  [[ -n "$fname" ]] || return 1
+  local dest="$cache/$fname"
+  [[ -f "$dest" ]] || curl -fsSL --max-time 60 \
+    "https://pkgs.omarchy.org/${OMARCHY_CHANNEL}/x86_64/$fname" -o "$dest" 2>/dev/null || return 1
+  printf '%s\n' "$dest"
+}
+# extrait un .pkg.tar.zst directement sur / (pas de .INSTALL, pas d'entrée
+# dans la db pacman — vérifié sans script post-install pour omarchy-nvim ;
+# pour omarchy-keyring le seul rôle du .INSTALL est le populate qu'on fait
+# déjà nous-mêmes juste après).
+extract_any_pkg() {
+  asrootsh "tar --zstd -xf '$1' -C / --exclude='.BUILDINFO' --exclude='.INSTALL' --exclude='.MTREE' --exclude='.PKGINFO'"
+}
+
 usage() {
   cat <<'USAGE'
 devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
@@ -415,34 +450,33 @@ do_repo() {
     need_sync=1
   fi
 
-  # omarchy-keyring / omarchy-nvim sont ARCH=any (aucun binaire compilé dedans :
-  # le keyring c'est des .gpg, omarchy-nvim c'est une config LazyVim vendorée).
-  # Omarchy ne les MIRRORE pourtant que dans son arbre x86_64 — trou de
-  # publication, pas une contrainte d'arch. On ajoute un second dépôt pointé
-  # en dur sur x86_64 : pacman refuse de lui-même tout paquet réellement
-  # x86_64 dessus (yay, 1password-cli…), seuls les paquets `any` en profitent.
-  if [[ "$ARCH" != "x86_64" ]] && ! grep -q '^\[omarchy-any\]' /etc/pacman.conf 2>/dev/null; then
-    run mkdir -p "$BACKUP_DIR"
-    [[ -f "$BACKUP_DIR/pacman.conf" ]] || asroot cp -a /etc/pacman.conf "$BACKUP_DIR/pacman.conf"
-    asrootsh "printf '\n# devbox (repli x86_64 pour les paquets [omarchy] ARCH=any absents de %s)\n[omarchy-any]\nSigLevel = Never\nServer = https://pkgs.omarchy.org/${OMARCHY_CHANNEL}/x86_64\n' \"$ARCH\" >> /etc/pacman.conf"
-    need_sync=1
-    ok "dépôt [omarchy-any] ajouté (repli x86_64, paquets any seulement)"
-  fi
-
   (( need_sync )) && asroot pacman -Sy
 
-  if pacman -Si omarchy-keyring >/dev/null 2>&1; then
-    if grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required'; then
-      ok "dépôt(s) omarchy déjà signés"
-    else
-      asroot pacman -S --noconfirm --needed omarchy-keyring
+  if grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required'; then
+    ok "dépôt [omarchy] déjà signé"
+  elif pacman -Si omarchy-keyring >/dev/null 2>&1; then
+    # x86_64 : omarchy-keyring est dans l'arbre local, chemin normal.
+    asroot pacman -S --noconfirm --needed omarchy-keyring
+    asroot pacman-key --populate omarchy
+    asrootsh "sed -i '/^\[omarchy\]/,\$ s/^SigLevel = Never\$/SigLevel = Required DatabaseOptional/' /etc/pacman.conf"
+    asroot pacman -Sy
+    ok "dépôt [omarchy] ajouté et refermé (SigLevel = Required DatabaseOptional)"
+  else
+    # $ARCH != x86_64 : omarchy-keyring (ARCH=any) manque de l'arbre local —
+    # trou de publication chez Omarchy, pas une contrainte technique (voir
+    # fetch_any_pkg). On extrait le paquet directement plutôt que de rester
+    # en SigLevel = Never indéfiniment.
+    local pkgfile
+    if pkgfile="$(fetch_any_pkg omarchy-keyring)"; then
+      extract_any_pkg "$pkgfile"
       asroot pacman-key --populate omarchy
       asrootsh "sed -i '/^\[omarchy\]/,\$ s/^SigLevel = Never\$/SigLevel = Required DatabaseOptional/' /etc/pacman.conf"
       asroot pacman -Sy
-      ok "dépôt(s) omarchy signés (SigLevel = Required DatabaseOptional)"
+      ok "omarchy-keyring récupéré depuis l'arbre x86_64 (ARCH=any) — dépôt [omarchy] refermé"
+      info "installé hors pacman (fichiers seulement, pas de suivi par la db — 'pacman -Q omarchy-keyring' restera vide)"
+    else
+      warn "omarchy-keyring introuvable (ni $ARCH ni x86_64) — dépôt [omarchy] gardé en SigLevel = Never."
     fi
-  else
-    warn "omarchy-keyring introuvable (ni $ARCH ni x86_64) — dépôt(s) gardé(s) en SigLevel = Never."
   fi
 }
 
@@ -454,23 +488,33 @@ pkg_list() {
 
 do_packages() {
   step "③" "Paquets"
-  local pkgs=() dropped=() unavailable=() p
+  local pkgs=() dropped=() unavailable=() rescued=() p
   while read -r p; do
     if [[ "$p" == "ufw" ]] && is_wsl; then dropped+=("$p"); continue; fi
     # certains paquets (surtout ceux de [omarchy]) n'existent qu'en x86_64 —
     # on vérifie contre les dépôts synchronisés plutôt que de figer une liste.
-    if ! pacman -Si "$p" >/dev/null 2>&1; then unavailable+=("$p"); continue; fi
-    pkgs+=("$p")
+    if pacman -Si "$p" >/dev/null 2>&1; then pkgs+=("$p"); continue; fi
+    # absent de l'arbre local : peut-être un ARCH=any publié seulement en
+    # x86_64 (cf. fetch_any_pkg) — sinon vrai binaire indispo pour $ARCH.
+    local pkgfile
+    if pkgfile="$(fetch_any_pkg "$p")"; then rescued+=("$p:$pkgfile"); else unavailable+=("$p"); fi
   done < <(pkg_list)
 
   (( ${#dropped[@]} )) && info "skippés sur WSL : ${dropped[*]} (pas de netfilter persistant)"
-  (( ${#unavailable[@]} )) && warn "indisponibles pour $ARCH (absents de core/extra/[omarchy]) : ${unavailable[*]}
+  (( ${#unavailable[@]} )) && warn "indisponibles pour $ARCH (absents de core/extra/[omarchy], même en ARCH=any) : ${unavailable[*]}
   → à installer/remplacer à la main si besoin (AUR proscrit ici)."
   info "${#pkgs[@]} paquets demandés"
 
   asroot pacman -S --needed --noconfirm "${pkgs[@]}" \
     || die "pacman a échoué. Relance à la main : sudo pacman -S --needed ${pkgs[*]}"
   ok "${#pkgs[@]} paquets installés / à jour"
+
+  if (( ${#rescued[@]} )); then
+    local names=("${rescued[@]%%:*}")
+    for r in "${rescued[@]}"; do extract_any_pkg "${r#*:}"; done
+    info "ARCH=any récupérés depuis l'arbre x86_64 : ${names[*]}
+  (hors pacman — fichiers seulement, pas de suivi par la db)"
+  fi
 
   if has docker; then
     asroot systemctl enable --now docker.socket || warn "docker.socket non activé"
