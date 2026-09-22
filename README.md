@@ -12,6 +12,17 @@ Arch nu ──▶ [omarchy] ──▶ 46 paquets ──▶ /etc/skel ──▶ m
 
 ## Usage
 
+### Nouvelle devbox (curl | bash)
+
+Clone (ou met à jour) `~/devbox` puis enchaîne sur `bootstrap.sh` :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jgsqware/devbox/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jgsqware/devbox/main/install.sh | bash -s -- --user jgsqware
+```
+
+### En local
+
 Le script se lance **indifféremment en root ou en utilisateur**.
 
 ```bash
