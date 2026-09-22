@@ -401,6 +401,7 @@ do_repo() {
     ok "keyring Arch déjà initialisé"
   fi
 
+  local need_sync=0
   if grep -q '^\[omarchy\]' /etc/pacman.conf 2>/dev/null; then
     ok "dépôt [omarchy] déjà déclaré"
   else
@@ -411,22 +412,37 @@ do_repo() {
     # ŒUF/POULE : le dépôt est signé mais son keyring est DANS le dépôt.
     # SigLevel = Never le temps d'un -Sy, puis on referme.
     asrootsh "printf '\n# devbox\n[omarchy]\nSigLevel = Never\nServer = $OMARCHY_REPO_URL\n' >> /etc/pacman.conf"
-    if asroot pacman -Sy --noconfirm omarchy-keyring; then
+    need_sync=1
+  fi
+
+  # omarchy-keyring / omarchy-nvim sont ARCH=any (aucun binaire compilé dedans :
+  # le keyring c'est des .gpg, omarchy-nvim c'est une config LazyVim vendorée).
+  # Omarchy ne les MIRRORE pourtant que dans son arbre x86_64 — trou de
+  # publication, pas une contrainte d'arch. On ajoute un second dépôt pointé
+  # en dur sur x86_64 : pacman refuse de lui-même tout paquet réellement
+  # x86_64 dessus (yay, 1password-cli…), seuls les paquets `any` en profitent.
+  if [[ "$ARCH" != "x86_64" ]] && ! grep -q '^\[omarchy-any\]' /etc/pacman.conf 2>/dev/null; then
+    run mkdir -p "$BACKUP_DIR"
+    [[ -f "$BACKUP_DIR/pacman.conf" ]] || asroot cp -a /etc/pacman.conf "$BACKUP_DIR/pacman.conf"
+    asrootsh "printf '\n# devbox (repli x86_64 pour les paquets [omarchy] ARCH=any absents de %s)\n[omarchy-any]\nSigLevel = Never\nServer = https://pkgs.omarchy.org/${OMARCHY_CHANNEL}/x86_64\n' \"$ARCH\" >> /etc/pacman.conf"
+    need_sync=1
+    ok "dépôt [omarchy-any] ajouté (repli x86_64, paquets any seulement)"
+  fi
+
+  (( need_sync )) && asroot pacman -Sy
+
+  if pacman -Si omarchy-keyring >/dev/null 2>&1; then
+    if grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required'; then
+      ok "dépôt(s) omarchy déjà signés"
+    else
+      asroot pacman -S --noconfirm --needed omarchy-keyring
       asroot pacman-key --populate omarchy
       asrootsh "sed -i '/^\[omarchy\]/,\$ s/^SigLevel = Never\$/SigLevel = Required DatabaseOptional/' /etc/pacman.conf"
       asroot pacman -Sy
-      ok "dépôt [omarchy] ajouté et refermé (SigLevel = Required DatabaseOptional)"
-    else
-      warn "omarchy-keyring absent pour $ARCH — [omarchy] ne publie de paquets signés qu'en x86_64.
-  Dépôt gardé en SigLevel = Never (non vérifié, mais servi en HTTPS par pkgs.omarchy.org).
-  omarchy-nvim et yay seront indisponibles ici (repli auto en ③) ; mise-bin l'est en général."
-      asroot pacman -Sy
+      ok "dépôt(s) omarchy signés (SigLevel = Required DatabaseOptional)"
     fi
-  fi
-
-  if ! (( DRY_RUN )) && [[ "$ARCH" == "x86_64" ]]; then
-    grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required' \
-      || warn "le dépôt [omarchy] est encore en SigLevel = Never — à refermer à la main"
+  else
+    warn "omarchy-keyring introuvable (ni $ARCH ni x86_64) — dépôt(s) gardé(s) en SigLevel = Never."
   fi
 }
 
