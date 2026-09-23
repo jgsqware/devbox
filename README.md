@@ -25,17 +25,19 @@ curl -fsSL https://raw.githubusercontent.com/jgsqware/devbox/main/install.sh | b
 
 Le script se lance **indifféremment en root ou en utilisateur**.
 
-Sur un poste déjà provisionné, préfère `make` à `./bootstrap.sh` directement :
-il fait un `git pull --ff-only` avant d'exécuter, pour ne jamais rejouer une
-version périmée du script.
+Sur un poste déjà provisionné, préfère `mise run bootstrap` à `./bootstrap.sh`
+directement : il fait un `git pull --ff-only` avant d'exécuter, pour ne
+jamais rejouer une version périmée du script (`mise` fait déjà partie de
+`packages.txt`). Premier lancement dans un clone : `mise trust`.
 
 ```bash
 git clone <url> devbox && cd devbox
-make ARGS="-n"                             # git pull + dry-run
-make                                       # git pull + bootstrap pour de vrai
-make ARGS="--only tailscale --with-tailscale"
-make pull                                  # juste la mise à jour, sans lancer bootstrap
-make bootstrap-only ARGS="-n"              # sans pull (offline / debug)
+mise trust                                       # une fois, config locale
+mise run bootstrap -- -n                         # git pull + dry-run
+mise run bootstrap                               # git pull + bootstrap pour de vrai
+mise run bootstrap -- --only tailscale --with-tailscale
+mise run pull                                    # juste la mise à jour, sans lancer bootstrap
+mise run bootstrap-only -- -n                    # sans pull (offline / debug)
 ```
 
 ### Depuis un root nu (WSL fraîche, conteneur Incus)

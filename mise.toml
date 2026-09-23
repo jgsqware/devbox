@@ -1,0 +1,20 @@
+# devbox/mise.toml — point d'entrée local, toujours à jour avant d'exécuter.
+#
+#   mise run bootstrap                    git pull --ff-only puis ./bootstrap.sh
+#   mise run bootstrap -- -n              idem, en dry-run
+#   mise run bootstrap -- --only ssh      idem, une seule étape
+#   mise run pull                         juste la mise à jour, sans lancer bootstrap
+#   mise run bootstrap-only -- -n         lance bootstrap.sh sans pull (offline/debug)
+
+[tasks.pull]
+description = "git pull --ff-only"
+run = "git pull --ff-only"
+
+[tasks.bootstrap-only]
+description = "./bootstrap.sh, sans pull"
+run = "./bootstrap.sh"
+
+[tasks.bootstrap]
+description = "git pull puis ./bootstrap.sh"
+depends = ["pull"]
+run = "./bootstrap.sh"
