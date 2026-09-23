@@ -142,6 +142,11 @@ intact.
   `AUR_PACKAGES` dans `bootstrap.sh` (`worktrunk-bin`, seul membre à ce jour)
   — installé via `yay` en fin d'étape `packages`, jamais en root (`makepkg`
   refuse). Ajouter un paquet ici doit rester l'exception, pas la norme.
+  Sur les `ARCH` sans binaire `yay` publié (aarch64 : ni `core/extra/[omarchy]`
+  ni `fetch_any_pkg`, qui rejette à raison un vrai binaire non-`ARCH=any`),
+  `bootstrap_yay_from_source` construit `yay` depuis l'AUR (`git clone` +
+  `makepkg -si`, après `base-devel`) avant de retenter `AUR_PACKAGES` — seul
+  cas où ce dépôt compile quelque chose plutôt que de picorer un binaire.
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
 - 🔒 **Pas de serveur sshd** : l'accès distant **entrant** passe uniquement

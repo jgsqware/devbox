@@ -507,6 +507,30 @@ pkg_list() {
   sed -e 's/#.*$//' -e 's/[[:space:]]//g' "$PKG_FILE" | grep -v '^$'
 }
 
+# yay n'a de binaire prébuilt que pour x86_64 (dépôt [omarchy]) — sur les
+# autres ARCH (aarch64 notamment), aucun chemin pacman/fetch_any_pkg ne
+# l'installe. yay est en Go, il compile sans souci sur ARM : dernier recours,
+# build depuis l'AUR (git + makepkg -si). Appelée seulement si AUR_PACKAGES
+# a besoin de yay et qu'il est encore absent après la boucle pacman normale.
+bootstrap_yay_from_source() {
+  has yay && return 0
+  if (( DRY_RUN )); then
+    info "yay absent — aurait construit depuis les sources (AUR : base-devel+git, makepkg -si)"
+    return 0
+  fi
+  info "yay absent (aucun binaire pour $ARCH) — build depuis les sources (AUR)"
+  asroot pacman -S --needed --noconfirm base-devel git \
+    || { warn "base-devel/git indisponibles — build de yay impossible"; return 1; }
+  local build_dir="$STATE_DIR/build/yay"
+  rm -rf "$build_dir"
+  mkdir -p "$(dirname "$build_dir")"
+  git clone --depth 1 https://aur.archlinux.org/yay.git "$build_dir" \
+    || { warn "git clone AUR/yay.git a échoué"; return 1; }
+  ( cd "$build_dir" && makepkg -si --needed --noconfirm ) \
+    || { warn "makepkg de yay a échoué — relance à la main : cd $build_dir && makepkg -si"; return 1; }
+  has yay && ok "yay construit depuis les sources (AUR)"
+}
+
 do_packages() {
   step "③" "Paquets"
   local pkgs=() dropped=() unavailable=() rescued=() p
@@ -548,17 +572,20 @@ do_packages() {
   # AUR_PACKAGES : exception délibérée au "zéro AUR", jamais via `asroot` —
   # makepkg (derrière yay) refuse de tourner en root, sudo n'est appelé par
   # yay lui-même que pour le `pacman -U` final.
-  local a
-  for a in "${AUR_PACKAGES[@]}"; do
-    if pacman -Qq "$a" >/dev/null 2>&1; then
-      ok "$a déjà installé (AUR)"
-    elif ! has yay; then
-      warn "$a (AUR) sauté — yay absent (étape ③ plus haut)"
-    else
-      run yay -S --needed --noconfirm "$a" \
-        || warn "$a (AUR) a échoué — relance à la main : yay -S $a"
-    fi
-  done
+  if (( ${#AUR_PACKAGES[@]} )); then
+    has yay || bootstrap_yay_from_source
+    local a
+    for a in "${AUR_PACKAGES[@]}"; do
+      if pacman -Qq "$a" >/dev/null 2>&1; then
+        ok "$a déjà installé (AUR)"
+      elif ! has yay; then
+        warn "$a (AUR) sauté — yay indisponible même après tentative de build depuis les sources"
+      else
+        run yay -S --needed --noconfirm "$a" \
+          || warn "$a (AUR) a échoué — relance à la main : yay -S $a"
+      fi
+    done
+  fi
 }
 
 # ============================================================= ④ locales ====
@@ -1060,6 +1087,7 @@ do_verify() {
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
+  check "yay présent"             "command -v yay >/dev/null 2>&1 && yay --version 2>&1 | head -1"
   check "worktrunk (AUR)"         "pacman -Qq worktrunk-bin >/dev/null 2>&1 && command -v worktrunk >/dev/null 2>&1 && worktrunk --version 2>&1 | head -1"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
