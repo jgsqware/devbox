@@ -608,9 +608,17 @@ install_worktrunk_fallback() {
   ok "worktrunk (wt) installé depuis les releases GitHub (sha256 vérifié) — fallback temporaire, PKGBUILD AUR cassé. ~/.local/bin/wt"
 }
 
+# 0 = pacman refuserait d'installer $1 (conflit avec un paquet déjà installé,
+# ex : glab vs glab-git de l'AUR, sans `provides` que `pacman -T` verrait).
+# `-S --print` déroule la résolution (conflits inclus) sans rien installer ;
+# `--needed` rend le test neutre pour un paquet déjà présent.
+pkg_conflicts_installed() {
+  ! pacman -S --needed --noconfirm --print "$1" >/dev/null 2>&1
+}
+
 do_packages() {
   step "③" "Paquets"
-  local pkgs=() dropped=() unavailable=() rescued=() provided=() p
+  local pkgs=() dropped=() unavailable=() rescued=() provided=() blocked=() p
   while read -r p; do
     if [[ "$p" == "ufw" ]] && is_wsl; then dropped+=("$p"); continue; fi
     # déjà satisfait par un AUTRE paquet installé qui le `provides` (ex :
@@ -621,13 +629,18 @@ do_packages() {
     fi
     # certains paquets (surtout ceux de [omarchy]) n'existent qu'en x86_64 —
     # on vérifie contre les dépôts synchronisés plutôt que de figer une liste.
-    if pacman -Si "$p" >/dev/null 2>&1; then pkgs+=("$p"); continue; fi
+    if pacman -Si "$p" >/dev/null 2>&1; then
+      if pkg_conflicts_installed "$p"; then blocked+=("$p"); else pkgs+=("$p"); fi
+      continue
+    fi
     # absent de l'arbre local : peut-être un ARCH=any publié seulement en
     # x86_64 (cf. fetch_any_pkg) — sinon vrai binaire indispo pour $ARCH.
     local pkgfile
     if pkgfile="$(fetch_any_pkg "$p")"; then rescued+=("$p:$pkgfile"); else unavailable+=("$p"); fi
   done < <(pkg_list)
 
+  (( ${#blocked[@]} )) && warn "ignorés — en conflit avec un paquet déjà installé (ex : version AUR -git) : ${blocked[*]}
+  → gardés tels quels ; remplace-les à la main si tu veux la version des dépôts."
   (( ${#provided[@]} )) && info "déjà fournis par un autre paquet installé (conflit évité) : ${provided[*]}"
   (( ${#dropped[@]} )) && info "skippés sur WSL : ${dropped[*]} (pas de netfilter persistant)"
   (( ${#unavailable[@]} )) && warn "indisponibles pour $ARCH (absents de core/extra/[omarchy], même en ARCH=any) : ${unavailable[*]}
@@ -1161,7 +1174,8 @@ do_verify() {
   # se propagerait sinon à cette affectation et planterait tout le script.
   missing_real="$(comm -23 <(pkg_list | sort) <(pacman -Qq | sort) | while read -r p; do
     [[ "$p" == ufw ]] && is_wsl && continue
-    pacman -T "$p" >/dev/null 2>&1 && continue   # fourni par un autre paquet (glab-git…)
+    pacman -T "$p" >/dev/null 2>&1 && continue   # fourni par un autre paquet
+    pkg_conflicts_installed "$p" && continue     # en conflit avec un installé (glab-git…)
     pacman -Si "$p" >/dev/null 2>&1 && printf '%s ' "$p"
   done)" || true
   if [[ -z "$missing_real" ]]; then
