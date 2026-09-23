@@ -888,8 +888,14 @@ do_tailscale() {
   # que la tailnet est jointe, pas seulement le run où --with-tailscale a été
   # passé — sinon un simple `mise run bootstrap` sans ce flag les saute tout
   # le temps une fois la tailnet déjà rejointe une première fois.
+  # --advertise-tags n'existe que sur `tailscale up`, pas `tailscale set`
+  # (`flag provided but not defined: -advertise-tags` sur cette version) —
+  # donc on réapplique `up` même déjà connecté, plutôt que `set`, pour que
+  # le tag soit (re)posé à chaque run sans redemander l'auth interactive.
   if ! (( DRY_RUN )) && tailscale status >/dev/null 2>&1; then
     ok "déjà connecté à la tailnet"
+    asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy \
+      || warn "tag:omarchy non appliqué — vérifie tagOwners dans l'ACL Tailscale"
   elif (( WITH_TAILSCALE )); then
     info "authentification interactive — l'IdP est en OTP seul (code par mail)"
     asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy
@@ -901,9 +907,7 @@ do_tailscale() {
 
   asroot tailscale set --operator="$DEVBOX_USER"
   asroot tailscale set --ssh
-  asroot tailscale set --advertise-tags=tag:omarchy \
-    || warn "tag:omarchy non appliqué — vérifie tagOwners dans l'ACL Tailscale"
-  ok "opérateur $DEVBOX_USER + Tailscale SSH + tag:omarchy actifs"
+  ok "opérateur $DEVBOX_USER + Tailscale SSH actifs (tag:omarchy)"
 
   cleanup_sshd
 }
