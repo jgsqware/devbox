@@ -38,7 +38,7 @@ PKG_FILE="$SCRIPT_DIR/packages.txt"
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth verify)
 DRY_RUN=0
 FORCE_SKEL=0
 WITH_TAILSCALE=1                                       # actif par défaut — --no-tailscale pour désactiver
@@ -155,7 +155,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale verify
+Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -169,6 +169,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
+  cli-auth  gh auth login + claude login — interactif, sauté si déjà authentifié
   verify    la table de vérification de fin
 
 Lancé en ROOT, le script s'arrête après `prereq` : il crée l'utilisateur puis
@@ -906,7 +907,50 @@ do_tailscale() {
   cleanup_sshd
 }
 
-# ============================================================= ⑩ verify =====
+# ============================================================ ⑩ cli-auth =====
+# gh + claude : mêmes machines à provisionner à chaque fois, donc auth
+# interactive par défaut ici plutôt que manuelle poste par poste — mais
+# jamais si déjà authentifié (idempotent, même logique que `tailscale up`
+# plus haut : on vérifie l'état avant de redéclencher un flow interactif).
+do_cli_auth() {
+  step "⑩" "Auth CLI (gh, claude)"
+
+  if ! has gh; then
+    warn "gh non installé (étape ③) — auth GitHub sautée"
+  elif (( DRY_RUN )); then
+    info "gh auth login (dry-run, non exécuté)"
+  elif gh auth status >/dev/null 2>&1; then
+    ok "gh déjà authentifié"
+  else
+    info "gh auth login — interactif (navigateur)"
+    gh auth login --hostname github.com --git-protocol https --web \
+      || warn "gh auth login a échoué/été annulé — relance à la main : gh auth login"
+  fi
+
+  # claude n'est pas un paquet pacman (zéro AUR) : installeur officiel
+  # curl.claude.ai/install.sh, binaire autonome dans ~/.local/bin.
+  if ! has claude; then
+    if (( DRY_RUN )); then
+      info "claude absent — aurait installé via https://claude.ai/install.sh"
+    else
+      info "claude absent — installation (https://claude.ai/install.sh)"
+      curl -fsSL https://claude.ai/install.sh | bash \
+        || warn "installation de claude échouée — relance à la main"
+      export PATH="$HOME/.local/bin:$PATH"
+    fi
+  fi
+
+  if ! has claude; then
+    (( DRY_RUN )) || warn "claude toujours absent après installation — auth sautée"
+  elif (( DRY_RUN )); then
+    info "claude login (dry-run, non exécuté)"
+  else
+    info "claude login — interactif (navigateur)"
+    claude login || warn "claude login a échoué/été annulé — relance à la main : claude login"
+  fi
+}
+
+# ============================================================= ⑪ verify =====
 CHECK_FAIL=0
 check() { # check "libellé" "commande"
   local label="$1" cmd="$2" out rc
@@ -924,13 +968,17 @@ check() { # check "libellé" "commande"
 }
 
 do_verify() {
-  step "⑩" "Vérification"
+  step "⑪" "Vérification"
   export OMARCHY_PATH="$OMARCHY_HOME"
   export OMARCHY_THEME_HEADLESS=1
   export PATH="$OMARCHY_HOME/bin:$PATH"
 
   check "utilisateur non-root"    "test \"\$(id -un)\" != root && id -un"
   check "membre de wheel"         "id -nG | tr ' ' '\n' | grep -qx wheel && echo wheel"
+  # getent (pas id -nG) : usermod écrit /etc/group immédiatement, mais la
+  # session courante garde ses groupes en cache jusqu'à la prochaine
+  # connexion — id -nG donnerait un faux ❌ juste après le run qui l'ajoute.
+  has docker && check "membre de docker" "getent group docker | grep -qw \"\$(id -un)\" && echo docker"
   check "sudo fonctionnel"        "sudo -n true 2>/dev/null && echo 'sans mdp' || { sudo -v && echo 'avec mdp'; }"
   is_wsl && check "systemd actif" "systemctl is-system-running | grep -qE 'running|degraded' && systemctl is-system-running"
   is_wsl && check "wsl.conf: user par défaut" "grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf && grep -E '^[[:space:]]*default' /etc/wsl.conf"
@@ -973,6 +1021,8 @@ do_verify() {
   has tailscale && check "opérateur tailscale" "sudo -n tailscale debug prefs 2>&1 | grep -q \"\\\"OperatorUser\\\":\\\"\$(id -un)\\\"\" && id -un"
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
+  has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
+  has claude && check "claude installé"    "claude --version 2>&1 | head -1"
 
   printf '\n'
   if (( CHECK_FAIL )); then
@@ -1006,6 +1056,7 @@ main() {
       shell)     do_shell ;;
       theme)     do_theme ;;
       tailscale) do_tailscale ;;
+      cli-auth)  do_cli_auth ;;
       verify)    do_verify ;;
     esac
     # en root, tout ce qui suit prereq écrit dans $HOME : on bascule
