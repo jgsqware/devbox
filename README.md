@@ -147,6 +147,12 @@ intact.
   `bootstrap_yay_from_source` construit `yay` depuis l'AUR (`git clone` +
   `makepkg -si`, après `base-devel`) avant de retenter `AUR_PACKAGES` — seul
   cas où ce dépôt compile quelque chose plutôt que de picorer un binaire.
+  Le PKGBUILD AUR de `worktrunk-bin` a lui-même un bug (`sha256sums_x86_64`
+  == `sha256sums_aarch64` sur deux archives différentes) qui fait échouer
+  `yay -S` sur aarch64 — `install_worktrunk_fallback` récupère alors le
+  binaire `wt` directement depuis les releases GitHub du projet, vérifié
+  contre le `.sha256` que le projet publie pour cet asset (pas le PKGBUILD
+  cassé). Fallback **temporaire**, à retirer une fois le PKGBUILD corrigé.
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
 - 🔒 **Pas de serveur sshd** : l'accès distant **entrant** passe uniquement

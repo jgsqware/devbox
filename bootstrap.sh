@@ -531,6 +531,50 @@ bootstrap_yay_from_source() {
   has yay && ok "yay construit depuis les sources (AUR)"
 }
 
+# Fallback TEMPORAIRE pour worktrunk-bin : le PKGBUILD AUR a
+# sha256sums_x86_64 == sha256sums_aarch64 alors que ce sont deux archives
+# GitHub différentes — bug upstream (à retirer dès qu'il est corrigé côté
+# AUR ; réf. commit 6518ea6). yay/makepkg refuse à raison d'installer un
+# fichier dont le hash ne correspond pas au PKGBUILD. En attendant, on
+# récupère le binaire `wt` directement depuis les releases GitHub du projet,
+# vérifié contre le .sha256 publié par le projet pour cet asset précis (pas
+# le PKGBUILD cassé) — donc pas d'install à l'aveugle malgré le contournement.
+install_worktrunk_fallback() {
+  has wt && return 0
+  if (( DRY_RUN )); then
+    info "worktrunk (wt) — aurait installé depuis les releases GitHub (dry-run)"
+    return 0
+  fi
+
+  local gh_arch asset url tmp
+  case "$ARCH" in
+    x86_64|aarch64) gh_arch="$ARCH" ;;
+    *) warn "worktrunk : pas de release GitHub connue pour $ARCH — sauté"; return 1 ;;
+  esac
+  asset="worktrunk-${gh_arch}-unknown-linux-musl.tar.xz"
+
+  url="$(curl -fsSL https://api.github.com/repos/max-sixty/worktrunk/releases/latest \
+    | grep -o "\"browser_download_url\": *\"[^\"]*${asset}\"" | grep -o 'https://[^"]*' | head -1)"
+  [[ -n "$url" ]] || { warn "worktrunk : asset $asset introuvable dans la dernière release GitHub"; return 1; }
+
+  tmp="$STATE_DIR/dl/worktrunk"
+  rm -rf "$tmp"; mkdir -p "$tmp"
+  curl -fsSL "$url" -o "$tmp/$asset" || { warn "worktrunk : téléchargement échoué ($url)"; return 1; }
+  # le projet publie un .sha256 par asset (contrairement au PKGBUILD AUR,
+  # qui lui est cassé) : vérification réelle, pas d'install à l'aveugle.
+  curl -fsSL "${url}.sha256" -o "$tmp/$asset.sha256" \
+    || { warn "worktrunk : téléchargement du .sha256 échoué — installation refusée sans vérification"; return 1; }
+  ( cd "$tmp" && sha256sum -c "$asset.sha256" >/dev/null ) \
+    || { warn "worktrunk : sha256 invalide — installation refusée"; return 1; }
+
+  tar -xJf "$tmp/$asset" -C "$tmp" || { warn "worktrunk : extraction échouée"; return 1; }
+  mkdir -p "$HOME/.local/bin"
+  install -Dm755 "$tmp/worktrunk-${gh_arch}-unknown-linux-musl/wt" "$HOME/.local/bin/wt" \
+    || { warn "worktrunk : installation du binaire échouée"; return 1; }
+  rm -rf "$tmp"
+  ok "worktrunk (wt) installé depuis les releases GitHub (sha256 vérifié) — fallback temporaire, PKGBUILD AUR cassé. ~/.local/bin/wt"
+}
+
 do_packages() {
   step "③" "Paquets"
   local pkgs=() dropped=() unavailable=() rescued=() p
@@ -580,9 +624,9 @@ do_packages() {
         ok "$a déjà installé (AUR)"
       elif ! has yay; then
         warn "$a (AUR) sauté — yay indisponible même après tentative de build depuis les sources"
-      else
-        run yay -S --needed --noconfirm "$a" \
-          || warn "$a (AUR) a échoué — relance à la main : yay -S $a"
+      elif ! run yay -S --needed --noconfirm "$a"; then
+        warn "$a (AUR) a échoué"
+        [[ "$a" == worktrunk-bin ]] && install_worktrunk_fallback
       fi
     done
   fi
@@ -1088,8 +1132,9 @@ do_verify() {
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
   check "yay présent"             "command -v yay >/dev/null 2>&1 && yay --version 2>&1 | head -1"
-  # worktrunk-bin installe le binaire `wt`, pas `worktrunk`
-  check "worktrunk (AUR)"         "pacman -Qq worktrunk-bin >/dev/null 2>&1 && command -v wt >/dev/null 2>&1 && wt --version 2>&1 | head -1"
+  # worktrunk-bin installe le binaire `wt`, pas `worktrunk` — via pacman
+  # (AUR/yay) OU via install_worktrunk_fallback (~/.local/bin/wt, GitHub direct)
+  check "worktrunk (wt)"          "command -v wt >/dev/null 2>&1 && wt --version 2>&1 | head -1"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
