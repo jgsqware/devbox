@@ -859,7 +859,7 @@ do_theme() {
 
 # ========================================================== ⑨ tailscale =====
 # Pas de sshd/openssh : le seul accès distant voulu est via la tailnet, donc
-# c'est Tailscale SSH (`tailscale set --ssh`) qui sert — pas de port 22 ouvert
+# c'est Tailscale SSH (`tailscale up --ssh`) qui sert — pas de port 22 ouvert
 # ailleurs, l'ACL de la tailnet fait office de pare-feu. `--operator` évite
 # d'avoir à sudo pour tailscale up/set/status au quotidien.
 
@@ -888,25 +888,27 @@ do_tailscale() {
   # que la tailnet est jointe, pas seulement le run où --with-tailscale a été
   # passé — sinon un simple `mise run bootstrap` sans ce flag les saute tout
   # le temps une fois la tailnet déjà rejointe une première fois.
-  # --advertise-tags n'existe que sur `tailscale up`, pas `tailscale set`
-  # (`flag provided but not defined: -advertise-tags` sur cette version) —
-  # donc on réapplique `up` même déjà connecté, plutôt que `set`, pour que
-  # le tag soit (re)posé à chaque run sans redemander l'auth interactive.
+  #
+  # Tout dans UN SEUL `tailscale up` (pas de `set` séparé) : --advertise-tags
+  # n'existe que sur `up`, pas `set` ("flag provided but not defined") — et
+  # `up` en reconfiguration exige de RE-mentionner tous les prefs non-défaut
+  # déjà actifs ("requires mentioning all non-default flags"), donc operator
+  # et --ssh doivent être sur la même ligne à chaque run, jamais posés à part.
+  local up_flags=(--hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy --operator="$DEVBOX_USER" --ssh)
+
   if ! (( DRY_RUN )) && tailscale status >/dev/null 2>&1; then
     ok "déjà connecté à la tailnet"
-    asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy \
-      || warn "tag:omarchy non appliqué — vérifie tagOwners dans l'ACL Tailscale"
+    asroot tailscale up "${up_flags[@]}" \
+      || warn "mise à jour tailscale up a échoué — relance à la main : tailscale up ${up_flags[*]}"
   elif (( WITH_TAILSCALE )); then
     info "authentification interactive — l'IdP est en OTP seul (code par mail)"
-    asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy
+    asroot tailscale up "${up_flags[@]}"
     ok "tailnet rejointe en tant que $TS_HOSTNAME (tag:omarchy)"
   else
     skip "désactivé (--no-tailscale) — relance sans ce flag pour rejoindre la tailnet"
     return 0
   fi
 
-  asroot tailscale set --operator="$DEVBOX_USER"
-  asroot tailscale set --ssh
   ok "opérateur $DEVBOX_USER + Tailscale SSH actifs (tag:omarchy)"
 
   cleanup_sshd
