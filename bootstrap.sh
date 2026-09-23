@@ -733,11 +733,21 @@ configure_starship_hostname() {
   fi
 
   # retire une éventuelle table [hostname] existante (vendorée ou d'un run précédent)
+  # + injecte $hostname dans le `format` top-level : le vendoré omarchy a un
+  # format personnalisé ("[$directory$git_branch$git_status]($style)$character",
+  # sans $all) — activer [hostname] ne suffit pas, starship n'affiche QUE ce
+  # que `format` référence explicitement.
   awk '
     /^\[hostname\]/ { skip=1; next }
     /^\[/ && skip   { skip=0 }
     !skip
-  ' "$toml" > "$toml.tmp" && mv "$toml.tmp" "$toml"
+  ' "$toml" | awk '
+    !done && /^\[/ { done=1 }
+    !done && /^format[[:space:]]*=/ && $0 !~ /\$hostname/ {
+      sub(/= *"/, "&$hostname ")
+    }
+    { print }
+  ' > "$toml.tmp" && mv "$toml.tmp" "$toml"
 
   cat >> "$toml" <<EOF
 
@@ -951,6 +961,8 @@ do_cli_auth() {
     (( DRY_RUN )) || warn "claude toujours absent après installation — auth sautée"
   elif (( DRY_RUN )); then
     info "claude auth login --claudeai --email $CLAUDE_EMAIL (dry-run, non exécuté)"
+  elif claude auth status --json 2>/dev/null | grep -q '"loggedIn": *true'; then
+    ok "claude déjà authentifié"
   else
     info "claude auth login — interactif ($CLAUDE_EMAIL)"
     claude auth login --claudeai --email "$CLAUDE_EMAIL" \
@@ -1021,16 +1033,17 @@ do_verify() {
   check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l 2>/dev/null)\" && echo '0 lien mort'"
   check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
-  has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\":\"[^\"]*\"' | head -1"
+  has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\": *\"[^\"]*\"' | head -1"
   # `tailscale debug prefs` n'est PAS couvert par --operator (contrairement à
   # up/set/status/ping) : sudo -n requis, échec propre (❌, texte visible) si
   # NOPASSWD n'est pas actif plutôt qu'un grep -q muet sur une sortie vide.
-  has tailscale && check "tailscale ssh actif" "sudo -n tailscale debug prefs 2>&1 | grep -q '\"RunSSH\":true' && echo actif"
-  has tailscale && check "opérateur tailscale" "sudo -n tailscale debug prefs 2>&1 | grep -q \"\\\"OperatorUser\\\":\\\"\$(id -un)\\\"\" && id -un"
+  has tailscale && check "tailscale ssh actif" "sudo -n tailscale debug prefs 2>&1 | grep -q '\"RunSSH\": *true' && echo actif"
+  has tailscale && check "opérateur tailscale" "sudo -n tailscale debug prefs 2>&1 | grep -q \"\\\"OperatorUser\\\": *\\\"\$(id -un)\\\"\" && id -un"
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
+  has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
   printf '\n'
   if (( CHECK_FAIL )); then

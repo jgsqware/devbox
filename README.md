@@ -153,7 +153,8 @@ intact.
   fois Tailscale SSH confirmé actif.
 - 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et
   `claude auth login --claudeai --email $CLAUDE_EMAIL`, interactifs, à chaque
-  provisioning — sautés si déjà authentifié (`gh auth status`). `claude`
+  provisioning — sautés si déjà authentifié (`gh auth status` /
+  `claude auth status --json` → `loggedIn: true`). `claude`
   n'est pas un paquet pacman (zéro AUR) : installé via le script officiel
   `curl.claude.ai/install.sh` s'il est absent. `CLAUDE_EMAIL` par défaut
   celle de Julien — override via la variable d'env si besoin.
