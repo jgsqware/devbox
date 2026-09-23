@@ -34,8 +34,8 @@ jamais rejouer une version périmée du script (`mise` fait déjà partie de
 git clone <url> devbox && cd devbox
 mise trust                                       # une fois, config locale
 mise run bootstrap -- -n                         # git pull + dry-run
-mise run bootstrap                               # git pull + bootstrap pour de vrai
-mise run bootstrap -- --only tailscale --with-tailscale
+mise run bootstrap                               # git pull + bootstrap pour de vrai (tailscale inclus)
+mise run bootstrap -- --no-tailscale             # sans rejoindre la tailnet
 mise run pull                                    # juste la mise à jour, sans lancer bootstrap
 mise run bootstrap-only -- -n                    # sans pull (offline / debug)
 ```

@@ -41,7 +41,7 @@ RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale verify)
 DRY_RUN=0
 FORCE_SKEL=0
-WITH_TAILSCALE=0
+WITH_TAILSCALE=1                                       # actif par défaut — --no-tailscale pour désactiver
 SUDO_NOPASSWD=0
 NO_REEXEC=0
 ROOT_MODE=0
@@ -142,7 +142,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   --from <étape>        démarre à cette étape (et continue)
   --only <étape>        n'exécute que celle-là
   --skip <a,b>          saute ces étapes
-  --with-tailscale      exécute aussi `tailscale up` (interactif, opt-in)
+  --with-tailscale      rejoint la tailnet (`tailscale up`, interactif) — actif par défaut
+  --no-tailscale        désactive l'étape tailscale (ni join, ni operator/ssh/tag)
   --theme <nom>         thème omarchy (défaut: tokyo-night)
   --locales "<a b>"     locales à générer (défaut: "en_US.UTF-8 fr_BE.UTF-8")
   --start-dir <chemin>  répertoire de démarrage sous WSL (défaut: $HOME, 'keep' = off)
@@ -167,7 +168,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
   shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
-  tailscale tailscaled + tailscale up + accès SSH via la tailnet   (opt-in)
+  tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
   verify    la table de vérification de fin
 
 Lancé en ROOT, le script s'arrête après `prereq` : il crée l'utilisateur puis
@@ -185,6 +186,7 @@ while [[ $# -gt 0 ]]; do
     --only)           ONLY_STEP="$2"; shift 2 ;;
     --skip)           SKIP_LIST="$2"; shift 2 ;;
     --with-tailscale) WITH_TAILSCALE=1; shift ;;
+    --no-tailscale)   WITH_TAILSCALE=0; shift ;;
     --theme)          THEME="$2"; shift 2 ;;
     --locales)        LOCALES="$2"; shift 2 ;;
     --start-dir)      START_DIR="$2"; shift 2 ;;
@@ -204,7 +206,7 @@ passthru() {
   [[ -n "$START_DIR" ]] && a+=(--start-dir "$START_DIR")
   (( DRY_RUN ))        && a+=(--dry-run)
   (( FORCE_SKEL ))     && a+=(--force-skel)
-  (( WITH_TAILSCALE )) && a+=(--with-tailscale)
+  (( WITH_TAILSCALE )) || a+=(--no-tailscale)
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
 }
@@ -891,7 +893,7 @@ do_tailscale() {
     asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy
     ok "tailnet rejointe en tant que $TS_HOSTNAME (tag:omarchy)"
   else
-    skip "opt-in — relance avec --with-tailscale (ou --only tailscale)"
+    skip "désactivé (--no-tailscale) — relance sans ce flag pour rejoindre la tailnet"
     return 0
   fi
 
@@ -1022,9 +1024,8 @@ main() {
   %sSuite :%s
     %s·%s ouvrir un nouveau shell (ou %sexec bash%s) pour charger OMARCHY_PATH
     %s·%s changer de thème : %sOMARCHY_THEME_HEADLESS=1 omarchy-theme-set <nom>%s
-    %s·%s rejoindre la tailnet : %s./%s --only tailscale --with-tailscale%s
 
-' "$B" "$R" "$DIM" "$R" "$B" "$R" "$DIM" "$R" "$B" "$R" "$DIM" "$R" "$B" "$SCRIPT_NAME" "$R"
+' "$B" "$R" "$DIM" "$R" "$B" "$R" "$DIM" "$R" "$B" "$R"
 }
 
 main "$@"
