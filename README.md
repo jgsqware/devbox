@@ -138,6 +138,10 @@ intact.
   `omarchy-nvim`, `mise-bin`, `yay`).
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
+- 🔒 **Pas de sshd/openssh** : l'accès distant passe uniquement par **Tailscale
+  SSH** (`tailscale set --ssh`, étape `tailscale`) — aucun port 22 ouvert hors
+  tailnet, l'ACL Tailscale fait office de pare-feu. `tailscale set --operator=$DEVBOX_USER`
+  évite le `sudo` pour `tailscale up/set/status` au quotidien.
 - 🖥️ **Terminfo Ghostty** (`TERM=xterm-ghostty`) : Ghostty ne publie pas cette
   entrée en tant que source (générée à sa compilation), et `ghostty-terminfo`
   chez `[omarchy]` n'existe qu'en `ARCH=x86_64` alors que son contenu (juste
