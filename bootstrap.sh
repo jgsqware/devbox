@@ -1088,7 +1088,8 @@ do_verify() {
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
   check "yay présent"             "command -v yay >/dev/null 2>&1 && yay --version 2>&1 | head -1"
-  check "worktrunk (AUR)"         "pacman -Qq worktrunk-bin >/dev/null 2>&1 && command -v worktrunk >/dev/null 2>&1 && worktrunk --version 2>&1 | head -1"
+  # worktrunk-bin installe le binaire `wt`, pas `worktrunk`
+  check "worktrunk (AUR)"         "pacman -Qq worktrunk-bin >/dev/null 2>&1 && command -v wt >/dev/null 2>&1 && wt --version 2>&1 | head -1"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
