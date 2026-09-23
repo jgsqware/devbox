@@ -610,9 +610,15 @@ install_worktrunk_fallback() {
 
 do_packages() {
   step "③" "Paquets"
-  local pkgs=() dropped=() unavailable=() rescued=() p
+  local pkgs=() dropped=() unavailable=() rescued=() provided=() p
   while read -r p; do
     if [[ "$p" == "ufw" ]] && is_wsl; then dropped+=("$p"); continue; fi
+    # déjà satisfait par un AUTRE paquet installé qui le `provides` (ex :
+    # glab-git pour glab) : l'installer déclencherait "are in conflict" et
+    # `--noconfirm` refuse le remplacement — ce qui fait échouer tout le lot.
+    if ! pacman -Qq "$p" >/dev/null 2>&1 && pacman -T "$p" >/dev/null 2>&1; then
+      provided+=("$p"); continue
+    fi
     # certains paquets (surtout ceux de [omarchy]) n'existent qu'en x86_64 —
     # on vérifie contre les dépôts synchronisés plutôt que de figer une liste.
     if pacman -Si "$p" >/dev/null 2>&1; then pkgs+=("$p"); continue; fi
@@ -622,6 +628,7 @@ do_packages() {
     if pkgfile="$(fetch_any_pkg "$p")"; then rescued+=("$p:$pkgfile"); else unavailable+=("$p"); fi
   done < <(pkg_list)
 
+  (( ${#provided[@]} )) && info "déjà fournis par un autre paquet installé (conflit évité) : ${provided[*]}"
   (( ${#dropped[@]} )) && info "skippés sur WSL : ${dropped[*]} (pas de netfilter persistant)"
   (( ${#unavailable[@]} )) && warn "indisponibles pour $ARCH (absents de core/extra/[omarchy], même en ARCH=any) : ${unavailable[*]}
   → à installer/remplacer à la main si besoin (AUR proscrit ici)."
@@ -1154,6 +1161,7 @@ do_verify() {
   # se propagerait sinon à cette affectation et planterait tout le script.
   missing_real="$(comm -23 <(pkg_list | sort) <(pacman -Qq | sort) | while read -r p; do
     [[ "$p" == ufw ]] && is_wsl && continue
+    pacman -T "$p" >/dev/null 2>&1 && continue   # fourni par un autre paquet (glab-git…)
     pacman -Si "$p" >/dev/null 2>&1 && printf '%s ' "$p"
   done)" || true
   if [[ -z "$missing_real" ]]; then
