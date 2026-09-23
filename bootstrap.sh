@@ -48,6 +48,7 @@ ROOT_MODE=0
 SKIP_LIST=""
 FROM_STEP=""
 ONLY_STEP=""
+SSH_PUBKEY=""                                          # vide = auto (réutilise/génère une clé)
 
 # ------------------------------------------------------------------- sortie --
 if [[ -t 1 ]]; then
@@ -143,6 +144,11 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   --only <étape>        n'exécute que celle-là
   --skip <a,b>          saute ces étapes
   --with-tailscale      exécute aussi `tailscale up` (interactif, opt-in)
+  --ssh-pubkey [valeur] clé publique pour ~/.ssh/authorized_keys (étape ssh) :
+                        chemin vers un .pub, ou la clé en clair. Sans valeur :
+                        réutilise ~/.ssh/id_*.pub si présente, sinon en génère
+                        une (ed25519). Une clé en place ──▶ auth par mot de
+                        passe désactivée dans sshd.
   --theme <nom>         thème omarchy (défaut: tokyo-night)
   --locales "<a b>"     locales à générer (défaut: "en_US.UTF-8 fr_BE.UTF-8")
   --start-dir <chemin>  répertoire de démarrage sous WSL (défaut: $HOME, 'keep' = off)
@@ -186,6 +192,10 @@ while [[ $# -gt 0 ]]; do
     --only)           ONLY_STEP="$2"; shift 2 ;;
     --skip)           SKIP_LIST="$2"; shift 2 ;;
     --with-tailscale) WITH_TAILSCALE=1; shift ;;
+    --ssh-pubkey)
+      if [[ $# -ge 2 && "$2" != --* ]]; then SSH_PUBKEY="$2"; shift 2
+      else SSH_PUBKEY=""; shift
+      fi ;;
     --theme)          THEME="$2"; shift 2 ;;
     --locales)        LOCALES="$2"; shift 2 ;;
     --start-dir)      START_DIR="$2"; shift 2 ;;
@@ -206,6 +216,7 @@ passthru() {
   (( DRY_RUN ))        && a+=(--dry-run)
   (( FORCE_SKEL ))     && a+=(--force-skel)
   (( WITH_TAILSCALE )) && a+=(--with-tailscale)
+  [[ -n "$SSH_PUBKEY" ]] && a+=(--ssh-pubkey "$SSH_PUBKEY")
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
 }
@@ -812,11 +823,77 @@ do_theme() {
 }
 
 # ========================================================== ⑨ tailscale =====
+# ~/.ssh/authorized_keys : --ssh-pubkey <valeur|chemin>, sinon réutilise une
+# clé existante (~/.ssh/id_*.pub), sinon en génère une (ed25519). Écrit le
+# contenu de la clé publique sur stdout, ou rien (+ code 1) si indisponible.
+setup_ssh_pubkey() {
+  local ssh_dir="$HOME/.ssh" existing_pub pubkey_content=""
+
+  run mkdir -p "$ssh_dir"
+  run chmod 700 "$ssh_dir"
+
+  if [[ -n "$SSH_PUBKEY" ]]; then
+    if [[ -f "$SSH_PUBKEY" ]]; then
+      pubkey_content="$(cat "$SSH_PUBKEY")"
+      info "clé fournie via fichier : $SSH_PUBKEY"
+    else
+      pubkey_content="$SSH_PUBKEY"
+      info "clé fournie en ligne de commande (--ssh-pubkey)"
+    fi
+  else
+    existing_pub="$(ls "$ssh_dir"/id_*.pub 2>/dev/null | head -1)"
+    if [[ -n "$existing_pub" ]]; then
+      pubkey_content="$(cat "$existing_pub")"
+      info "clé existante réutilisée : $(basename "$existing_pub")"
+    elif (( DRY_RUN )); then
+      info "aucune clé existante — en aurait généré une (ed25519)"
+    else
+      run ssh-keygen -t ed25519 -N "" \
+        -C "$DEVBOX_USER@$(hostname -s 2>/dev/null || echo devbox)" \
+        -f "$ssh_dir/id_ed25519"
+      pubkey_content="$(cat "$ssh_dir/id_ed25519.pub" 2>/dev/null || true)"
+      warn "nouvelle paire ed25519 générée — récupère la PRIVÉE avant de perdre l'accès console : $ssh_dir/id_ed25519"
+    fi
+  fi
+
+  [[ -n "$pubkey_content" ]] || return 1
+  printf '%s\n' "$pubkey_content"
+}
+
+# désactive l'auth par mot de passe une fois une clé en place — sinon un
+# compte fraîchement créé sans mot de passe (voir do_user, mode non-TTY)
+# reste injoignable en SSH tout en étant "ouvert" côté sshd.
+harden_sshd() {
+  local dropin=/etc/ssh/sshd_config.d/99-devbox.conf
+  if [[ -f "$dropin" ]] && ! (( DRY_RUN )); then
+    ok "sshd déjà durci (auth par mot de passe désactivée)"
+    return 0
+  fi
+  asrootsh "printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > '$dropin'"
+  asroot systemctl reload sshd 2>/dev/null || asroot systemctl restart sshd
+  ok "auth par mot de passe désactivée (clé requise) — $dropin"
+}
+
 do_ssh() {
   step "⑨" "sshd (openssh)"
   has sshd || die "openssh non installé (étape ③)."
   asroot systemctl enable --now sshd
-  ok "sshd actif — accès distant possible dès ce nœud"
+
+  local pubkey auth_file="$HOME/.ssh/authorized_keys"
+  if pubkey="$(setup_ssh_pubkey)"; then
+    if (( DRY_RUN )); then
+      printf '  %s$ %s%s\n' "$DIM" "echo '<clé>' >> $auth_file" "$R"
+    elif [[ -f "$auth_file" ]] && grep -qxF "$pubkey" "$auth_file" 2>/dev/null; then
+      ok "clé déjà présente dans authorized_keys"
+    else
+      printf '%s\n' "$pubkey" >> "$auth_file"
+      run chmod 600 "$auth_file"
+      ok "clé ajoutée à authorized_keys"
+    fi
+    harden_sshd
+  else
+    warn "aucune clé publique — sshd reste en auth par mot de passe. Pense à : passwd $DEVBOX_USER"
+  fi
 }
 
 do_tailscale() {
@@ -875,6 +952,7 @@ do_verify() {
   check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
   has sshd      && check "sshd actif" "systemctl is-active sshd >/dev/null 2>&1 && systemctl is-active sshd"
+  has sshd      && check "clé SSH autorisée" "test -s \"\$HOME/.ssh/authorized_keys\" && wc -l < \"\$HOME/.ssh/authorized_keys\""
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\":\"[^\"]*\"' | head -1"
 
   printf '\n'
