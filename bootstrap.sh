@@ -608,17 +608,9 @@ install_worktrunk_fallback() {
   ok "worktrunk (wt) installé depuis les releases GitHub (sha256 vérifié) — fallback temporaire, PKGBUILD AUR cassé. ~/.local/bin/wt"
 }
 
-# 0 = pacman refuserait d'installer $1 (conflit avec un paquet déjà installé,
-# ex : glab vs glab-git de l'AUR, sans `provides` que `pacman -T` verrait).
-# `-S --print` déroule la résolution (conflits inclus) sans rien installer ;
-# `--needed` rend le test neutre pour un paquet déjà présent.
-pkg_conflicts_installed() {
-  ! pacman -S --needed --noconfirm --print "$1" >/dev/null 2>&1
-}
-
 do_packages() {
   step "③" "Paquets"
-  local pkgs=() dropped=() unavailable=() rescued=() provided=() blocked=() p
+  local pkgs=() dropped=() unavailable=() rescued=() provided=() p
   while read -r p; do
     if [[ "$p" == "ufw" ]] && is_wsl; then dropped+=("$p"); continue; fi
     # déjà satisfait par un AUTRE paquet installé qui le `provides` (ex :
@@ -629,27 +621,47 @@ do_packages() {
     fi
     # certains paquets (surtout ceux de [omarchy]) n'existent qu'en x86_64 —
     # on vérifie contre les dépôts synchronisés plutôt que de figer une liste.
-    if pacman -Si "$p" >/dev/null 2>&1; then
-      if pkg_conflicts_installed "$p"; then blocked+=("$p"); else pkgs+=("$p"); fi
-      continue
-    fi
+    if pacman -Si "$p" >/dev/null 2>&1; then pkgs+=("$p"); continue; fi
     # absent de l'arbre local : peut-être un ARCH=any publié seulement en
     # x86_64 (cf. fetch_any_pkg) — sinon vrai binaire indispo pour $ARCH.
     local pkgfile
     if pkgfile="$(fetch_any_pkg "$p")"; then rescued+=("$p:$pkgfile"); else unavailable+=("$p"); fi
   done < <(pkg_list)
 
-  (( ${#blocked[@]} )) && warn "ignorés — en conflit avec un paquet déjà installé (ex : version AUR -git) : ${blocked[*]}
-  → gardés tels quels ; remplace-les à la main si tu veux la version des dépôts."
   (( ${#provided[@]} )) && info "déjà fournis par un autre paquet installé (conflit évité) : ${provided[*]}"
   (( ${#dropped[@]} )) && info "skippés sur WSL : ${dropped[*]} (pas de netfilter persistant)"
   (( ${#unavailable[@]} )) && warn "indisponibles pour $ARCH (absents de core/extra/[omarchy], même en ARCH=any) : ${unavailable[*]}
   → à installer/remplacer à la main si besoin (AUR proscrit ici)."
   info "${#pkgs[@]} paquets demandés"
 
-  asroot pacman -S --needed --noconfirm "${pkgs[@]}" \
-    || die "pacman a échoué. Relance à la main : sudo pacman -S --needed ${pkgs[*]}"
-  ok "${#pkgs[@]} paquets installés / à jour"
+  # Un seul paquet en conflit (ex : glab vs glab-git de l'AUR, que `pacman
+  # --noconfirm` refuse de remplacer) fait échouer TOUT le lot : on tente
+  # d'abord en groupe (rapide), puis paquet par paquet, et on continue en
+  # signalant ceux qui restent — au lieu de mourir. La liste est gardée dans
+  # packages.skipped pour que `verify` ne les compte pas comme manquants.
+  local failed=()
+  if ! asroot pacman -S --needed --noconfirm "${pkgs[@]}"; then
+    warn "installation groupée échouée (souvent un conflit avec un paquet déjà installé) — repli paquet par paquet"
+    for p in "${pkgs[@]}"; do
+      asroot pacman -S --needed --noconfirm "$p" || failed+=("$p")
+    done
+    (( ${#failed[@]} < ${#pkgs[@]} )) \
+      || die "aucun paquet n'a pu être installé. Relance à la main : sudo pacman -S --needed ${pkgs[*]}"
+  fi
+  if ! (( DRY_RUN )); then
+    mkdir -p "$STATE_DIR"
+    if (( ${#failed[@]} )); then printf '%s\n' "${failed[@]}" > "$STATE_DIR/packages.skipped"
+    else : > "$STATE_DIR/packages.skipped"
+    fi
+  fi
+  if (( ${#failed[@]} )); then
+    warn "non installés : ${failed[*]}
+  → conflit avec un paquet déjà installé (version AUR -git ?) ou erreur pacman ci-dessus — gardés tels quels ;
+    remplace-les à la main si tu veux la version des dépôts."
+    ok "$(( ${#pkgs[@]} - ${#failed[@]} )) / ${#pkgs[@]} paquets installés / à jour"
+  else
+    ok "${#pkgs[@]} paquets installés / à jour"
+  fi
 
   if (( ${#rescued[@]} )); then
     local names=("${rescued[@]%%:*}")
@@ -1175,7 +1187,7 @@ do_verify() {
   missing_real="$(comm -23 <(pkg_list | sort) <(pacman -Qq | sort) | while read -r p; do
     [[ "$p" == ufw ]] && is_wsl && continue
     pacman -T "$p" >/dev/null 2>&1 && continue   # fourni par un autre paquet
-    pkg_conflicts_installed "$p" && continue     # en conflit avec un installé (glab-git…)
+    grep -qx "$p" "$STATE_DIR/packages.skipped" 2>/dev/null && continue   # refusé par pacman (conflit…), déjà signalé
     pacman -Si "$p" >/dev/null 2>&1 && printf '%s ' "$p"
   done)" || true
   if [[ -z "$missing_real" ]]; then
