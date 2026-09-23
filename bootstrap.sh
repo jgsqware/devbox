@@ -46,7 +46,13 @@ RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth verify)
 DRY_RUN=0
 FORCE_SKEL=0
-WITH_TAILSCALE=1                                       # actif par défaut — --no-tailscale pour désactiver
+FORCE_FULL=0
+IS_OMARCHY=0                                           # posé par detect_omarchy
+OMARCHY_WHY=""
+# étapes qui ÉCRASENT ce qu'un vrai Omarchy gère lui-même (locale, /etc/skel,
+# moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
+OMARCHY_PROTECTED=(locale skel vendor shell theme)
+WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 SUDO_NOPASSWD=0
 NO_REEXEC=0
 ROOT_MODE=0
@@ -100,6 +106,29 @@ same_file() {
   fi
 }
 is_wsl()   { grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; }
+
+# Vrai Omarchy (distro installée) vs Arch nu que devbox habille : sur le
+# premier, le moteur, /etc/skel, bashrc, thème et locale sont déjà gérés par
+# Omarchy et par omarchy-update — les écraser casse la machine. Signaux :
+# kernel *-omarchy, paquet `omarchy` (jamais installé par devbox, cf. README),
+# /usr/share/omarchy, ou un checkout complet (install/ est exclu du
+# sparse-checkout de devbox, donc absent d'un moteur vendoré).
+detect_omarchy() {
+  local why=""
+  if [[ "$(uname -r)" == *omarchy* ]]; then why="kernel $(uname -r)"
+  elif pacman -Qq omarchy >/dev/null 2>&1; then why="paquet omarchy installé"
+  elif [[ -d /usr/share/omarchy ]]; then why="/usr/share/omarchy présent"
+  elif [[ -d "$OMARCHY_HOME/install" ]]; then why="checkout complet dans $OMARCHY_HOME"
+  fi
+  if [[ -n "$why" ]]; then IS_OMARCHY=1; OMARCHY_WHY="$why"; fi
+}
+# 0 = cette étape est à sauter (ou à réduire) sur un vrai Omarchy
+omarchy_guarded() {
+  (( IS_OMARCHY )) && ! (( FORCE_FULL )) || return 1
+  local x
+  for x in "${OMARCHY_PROTECTED[@]}"; do [[ "$x" == "$1" ]] && return 0; done
+  return 1
+}
 stamped()  { [[ -f "$STATE_DIR/stamp.$1" ]]; }
 stamp()    { (( DRY_RUN )) || { mkdir -p "$STATE_DIR"; date -Iseconds > "$STATE_DIR/stamp.$1"; }; }
 
@@ -156,6 +185,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
                         annoncé à la tailnet ; sans cette option, rien n'est modifié
   --channel <c>         stable (défaut) | rc | edge
   --force-skel          rejoue la copie de /etc/skel même si déjà faite
+  --force-full          ignore la détection d'un vrai Omarchy et rejoue TOUTES les
+                        étapes (écrase skel/moteur/bashrc/thème/locale d'Omarchy)
   --no-reexec           en root : ne pas se relancer en utilisateur (debug)
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
@@ -199,6 +230,7 @@ while [[ $# -gt 0 ]]; do
     --hostname)       TS_HOSTNAME="$2"; HOSTNAME_SET=1; shift 2 ;;
     --channel)        OMARCHY_CHANNEL="$2"; OMARCHY_REPO_URL="https://pkgs.omarchy.org/${2}/\$arch"; shift 2 ;;
     --force-skel)     FORCE_SKEL=1; shift ;;
+    --force-full)     FORCE_FULL=1; shift ;;
     --no-reexec)      NO_REEXEC=1; shift ;;
     -n|--dry-run)     DRY_RUN=1; shift ;;
     -h|--help)        usage; exit 0 ;;
@@ -212,6 +244,7 @@ passthru() {
   [[ -n "$START_DIR" ]] && a+=(--start-dir "$START_DIR")
   (( DRY_RUN ))        && a+=(--dry-run)
   (( FORCE_SKEL ))     && a+=(--force-skel)
+  (( FORCE_FULL ))     && a+=(--force-full)
   (( WITH_TAILSCALE )) || a+=(--no-tailscale)
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
@@ -850,6 +883,20 @@ EOF
   ok "hostname du prompt : $host ($color)"
 }
 
+# Sur un vrai Omarchy : ni ~/.bashrc, ni tmux/btop/git, ni le moteur — on ne
+# touche qu'au hostname coloré du prompt, en place et avec sauvegarde de
+# starship.toml avant la toute première modification.
+do_shell_light() {
+  step "⑦" "Prompt : hostname coloré (Omarchy détecté — reste de l'étape sauté)"
+  local toml="$HOME/.config/starship.toml"
+  if [[ -f "$toml" ]] && ! grep -q '^format.*\$hostname' "$toml"; then
+    run mkdir -p "$BACKUP_DIR/.config"
+    run cp -a "$toml" "$BACKUP_DIR/.config/starship.toml"
+    info "sauvegarde: $BACKUP_DIR/.config/starship.toml"
+  fi
+  configure_starship_hostname
+}
+
 do_shell() {
   step "⑦" "Shell omarchy (prompt, alias, fonctions)"
   [[ -d "$OMARCHY_HOME/default/bash" ]] \
@@ -1078,6 +1125,10 @@ check() { # check "libellé" "commande"
 
 do_verify() {
   step "⑪" "Vérification"
+  # contrôles propres à un devbox provisionné de bout en bout : sans objet sur
+  # un vrai Omarchy, dont devbox n'a volontairement pas touché skel/bashrc/thème.
+  local full=1
+  omarchy_guarded skel && full=0
   export OMARCHY_PATH="$OMARCHY_HOME"
   export OMARCHY_THEME_HEADLESS=1
   export PATH="$OMARCHY_HOME/bin:$PATH"
@@ -1111,16 +1162,16 @@ do_verify() {
     missing_cmd="printf '%s\n' $(printf '%q' "$missing_real"); exit 1"
   fi
   check "paquets manquants" "$missing_cmd"
-  check "loader rc.d dans ~/.bashrc"  "grep -q 'devbox/rc.d' \"\$HOME/.bashrc\" && ls \"$RC_D\" | tr '\n' ' '"
+  (( full )) && check "loader rc.d dans ~/.bashrc"  "grep -q 'devbox/rc.d' \"\$HOME/.bashrc\" && ls \"$RC_D\" | tr '\n' ' '"
   check "starship actif dans bash"  "bash -ic 'echo \"\${STARSHIP_SHELL:-KO}\"' 2>/dev/null | tail -1 | grep -qv KO && echo bash"
   check "prompt starship configuré" "test -r \"\$HOME/.config/starship.toml\" && head -1 \"\$HOME/.config/starship.toml\""
   check "hostname coloré dans le prompt" "grep -A3 '^\[hostname\]' \"\$HOME/.config/starship.toml\" 2>/dev/null | grep -o 'bold #[0-9a-fA-F]*' | head -1"
-  check "locale utilisable"       "LC_ALL=${LOCALES%% *} locale >/dev/null 2>&1 && echo '${LOCALES%% *}'"
-  check "configs /etc/skel"       "test -d \"\$HOME/.config/nvim\" && du -sh \"\$HOME/.config/nvim\" | cut -f1"
-  check "plugins nvim pré-cachés" "test \$(ls \"\$HOME/.local/share/nvim/lazy\" 2>/dev/null | wc -l) -ge 40 && ls \"\$HOME/.local/share/nvim/lazy\" | wc -l"
-  check "nvim démarre proprement" "nvim --headless +qa 2>&1 && echo 'exit 0'"
+  (( full )) && check "locale utilisable"       "LC_ALL=${LOCALES%% *} locale >/dev/null 2>&1 && echo '${LOCALES%% *}'"
+  (( full )) && check "configs /etc/skel"       "test -d \"\$HOME/.config/nvim\" && du -sh \"\$HOME/.config/nvim\" | cut -f1"
+  (( full )) && check "plugins nvim pré-cachés" "test \$(ls \"\$HOME/.local/share/nvim/lazy\" 2>/dev/null | wc -l) -ge 40 && ls \"\$HOME/.local/share/nvim/lazy\" | wc -l"
+  (( full )) && check "nvim démarre proprement" "nvim --headless +qa 2>&1 && echo 'exit 0'"
   check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l 2>/dev/null)\" && echo '0 lien mort'"
-  check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
+  (( full )) && check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\": *\"[^\"]*\"' | head -1"
   # `tailscale debug prefs` n'est PAS couvert par --operator (contrairement à
@@ -1150,15 +1201,32 @@ do_verify() {
 # =============================================================== main ========
 main() {
   preflight
+  detect_omarchy
   printf '\n%s devbox bootstrap v%s %s  %s(%s · %s · canal %s%s)%s\n' \
     "$B$BLU" "$VERSION" "$R" "$DIM" \
-    "$(is_wsl && echo WSL || echo 'Arch nu')" \
+    "$(is_wsl && echo WSL || { (( IS_OMARCHY )) && echo Omarchy || echo 'Arch nu'; })" \
     "$( (( ROOT_MODE )) && echo "root ▸ $DEVBOX_USER" || id -un)" \
     "$OMARCHY_CHANNEL" "$( (( DRY_RUN )) && echo ' · DRY-RUN')" "$R"
+
+  if (( IS_OMARCHY )); then
+    if (( FORCE_FULL )); then
+      warn "Omarchy détecté ($OMARCHY_WHY) mais --force-full : TOUTES les étapes tournent, y compris celles qui écrasent sa config"
+    else
+      info "Omarchy détecté ($OMARCHY_WHY) — étapes sautées : ${OMARCHY_PROTECTED[*]} (--force-full pour forcer)"
+    fi
+  fi
 
   local s
   for s in "${STEPS[@]}"; do
     wanted "$s" || continue
+    if omarchy_guarded "$s"; then
+      [[ "$ONLY_STEP" == "$s" ]] && die "étape '$s' refusée : Omarchy détecté ($OMARCHY_WHY), elle écraserait sa config.
+  Relance avec --force-full si c'est vraiment voulu."
+      if [[ "$s" == shell ]]; then do_shell_light
+      else step "·" "$s"; skip "géré par Omarchy — sauté (--force-full pour écraser)"
+      fi
+      continue
+    fi
     case "$s" in
       user)      do_user ;;
       prereq)    do_prereq ;;
@@ -1183,6 +1251,11 @@ main() {
   if (( ROOT_MODE )); then
     printf '\n  %sÉtapes root terminées.%s Reprends en %s%s%s :  %ssu - %s -c "cd %s && ./%s --from repo"%s\n\n' \
       "$B" "$R" "$B" "$DEVBOX_USER" "$R" "$B" "$DEVBOX_USER" "$SCRIPT_DIR" "$SCRIPT_NAME" "$R"
+    return 0
+  fi
+
+  if (( IS_OMARCHY )) && ! (( FORCE_FULL )); then
+    printf '\n  %sSuite :%s ouvrir un nouveau shell (prompt hostname, groupe docker)\n\n' "$B" "$R"
     return 0
   fi
 

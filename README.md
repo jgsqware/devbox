@@ -153,6 +153,17 @@ intact.
   binaire `wt` directement depuis les releases GitHub du projet, vérifié
   contre le `.sha256` que le projet publie pour cet asset (pas le PKGBUILD
   cassé). Fallback **temporaire**, à retirer une fois le PKGBUILD corrigé.
+- 🛡️ **Vrai Omarchy détecté ⇒ étapes non destructives seulement.** `detect_omarchy`
+  repère une distro Omarchy installée (kernel `*-omarchy`, paquet `omarchy`,
+  `/usr/share/omarchy`, ou checkout complet — `install/` est exclu du
+  sparse-checkout devbox, donc absent d'un moteur vendoré). Dans ce cas
+  `locale`, `skel`, `vendor`, `shell` et `theme` sont **sautés** : Omarchy gère
+  lui-même son moteur, `/etc/skel`, `~/.bashrc` et son thème, et `omarchy-update`
+  casserait dessus. Restent `repo`, `packages`, `tailscale`, `cli-auth`,
+  `verify` (dont les contrôles propres à un devbox complet sont masqués), plus
+  le hostname coloré du prompt, patché **en place** dans `starship.toml` avec
+  sauvegarde préalable. `--only <étape protégée>` est refusé ; `--force-full`
+  ignore la détection et rejoue tout (écrase la config Omarchy).
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
 - 🔒 **Pas de serveur sshd** : l'accès distant **entrant** passe uniquement
