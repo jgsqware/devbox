@@ -36,6 +36,10 @@ ARCH="$(uname -m)"                                     # [omarchy] ne publie oma
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/devbox"
 BACKUP_DIR="$STATE_DIR/backup/$(date +%Y%m%d-%H%M%S)"
 PKG_FILE="$SCRIPT_DIR/packages.txt"
+# Unique exception au "zéro AUR" de packages.txt (voir do_packages) — jamais
+# dans packages.txt lui-même, qui reste strictement pacman officiel (sur quoi
+# repose le check verify "paquets manquants").
+AUR_PACKAGES=(worktrunk-bin)
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 
@@ -540,6 +544,21 @@ do_packages() {
       info "groupe docker ajouté — effectif à la prochaine session"
     fi
   fi
+
+  # AUR_PACKAGES : exception délibérée au "zéro AUR", jamais via `asroot` —
+  # makepkg (derrière yay) refuse de tourner en root, sudo n'est appelé par
+  # yay lui-même que pour le `pacman -U` final.
+  local a
+  for a in "${AUR_PACKAGES[@]}"; do
+    if pacman -Qq "$a" >/dev/null 2>&1; then
+      ok "$a déjà installé (AUR)"
+    elif ! has yay; then
+      warn "$a (AUR) sauté — yay absent (étape ③ plus haut)"
+    else
+      run yay -S --needed --noconfirm "$a" \
+        || warn "$a (AUR) a échoué — relance à la main : yay -S $a"
+    fi
+  done
 }
 
 # ============================================================= ④ locales ====
@@ -1041,6 +1060,7 @@ do_verify() {
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
+  check "worktrunk (AUR)"         "pacman -Qq worktrunk-bin >/dev/null 2>&1 && command -v worktrunk >/dev/null 2>&1 && worktrunk --version 2>&1 | head -1"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"

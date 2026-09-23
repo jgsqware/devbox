@@ -136,8 +136,12 @@ intact.
 - ⛔ **Ne jamais `pacman -S omarchy`** : 22 dépendances / 121 Mo (hyprland, sddm,
   quickshell…) et tout l'écrémage part à la poubelle. Le moteur de thème est
   vendoré en sparse-checkout **no-cone** (~5 Mo : `bin/`, `default/`, `themes/` sans les images).
-- ✅ **Zéro AUR** : les 46 paquets sont binaires (`core`/`extra` + 3 de `[omarchy]` :
-  `omarchy-nvim`, `mise-bin`, `yay`).
+- ✅ **Zéro AUR dans `packages.txt`** : tous les paquets qui y figurent sont
+  binaires (`core`/`extra` + 3 de `[omarchy]` : `omarchy-nvim`, `mise-bin`,
+  `yay`). Seule exception, délibérée et **hors `packages.txt`** :
+  `AUR_PACKAGES` dans `bootstrap.sh` (`worktrunk-bin`, seul membre à ce jour)
+  — installé via `yay` en fin d'étape `packages`, jamais en root (`makepkg`
+  refuse). Ajouter un paquet ici doit rester l'exception, pas la norme.
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
 - 🔒 **Pas de serveur sshd** : l'accès distant **entrant** passe uniquement
