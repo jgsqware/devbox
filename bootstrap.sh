@@ -25,6 +25,7 @@ OMARCHY_GIT="${OMARCHY_GIT:-https://github.com/omacom/omarchy.git}"
 OMARCHY_HOME="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
 THEME="${DEVBOX_THEME:-tokyo-night}"
 LOCALES="${DEVBOX_LOCALES:-en_US.UTF-8 fr_BE.UTF-8}"   # 1re = LANG par défaut
+CLAUDE_EMAIL="${CLAUDE_EMAIL:-kdhckrvddf@privaterelay.appleid.com}"   # étape cli-auth
 START_DIR="${DEVBOX_START_DIR:-}"                      # vide = $HOME ; "keep" = off
 TS_HOSTNAME="${DEVBOX_HOSTNAME:-$(hostname -s 2>/dev/null || echo devbox)}"
 HOSTNAME_SET=0                                         # 1 = hostname demandé explicitement
@@ -169,7 +170,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
-  cli-auth  gh auth login + claude login — interactif, sauté si déjà authentifié
+  cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   verify    la table de vérification de fin
 
 Lancé en ROOT, le script s'arrête après `prereq` : il crée l'utilisateur puis
@@ -943,10 +944,11 @@ do_cli_auth() {
   if ! has claude; then
     (( DRY_RUN )) || warn "claude toujours absent après installation — auth sautée"
   elif (( DRY_RUN )); then
-    info "claude login (dry-run, non exécuté)"
+    info "claude auth login --claudeai --email $CLAUDE_EMAIL (dry-run, non exécuté)"
   else
-    info "claude login — interactif (navigateur)"
-    claude login || warn "claude login a échoué/été annulé — relance à la main : claude login"
+    info "claude auth login — interactif ($CLAUDE_EMAIL)"
+    claude auth login --claudeai --email "$CLAUDE_EMAIL" \
+      || warn "claude auth login a échoué/été annulé — relance à la main : claude auth login --claudeai --email $CLAUDE_EMAIL"
   fi
 }
 

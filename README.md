@@ -147,10 +147,12 @@ intact.
   s'annonce avec `--advertise-tags=tag:omarchy` (nécessite `tagOwners` dans
   l'ACL). Un `sshd` hérité d'un provisioning antérieur est désactivé + son
   paquet `openssh` retiré, une fois Tailscale SSH confirmé actif.
-- 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et `claude
-  login`, interactifs, à chaque provisioning — sautés si déjà authentifié
-  (`gh auth status`). `claude` n'est pas un paquet pacman (zéro AUR) : installé
-  via le script officiel `curl.claude.ai/install.sh` s'il est absent.
+- 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et
+  `claude auth login --claudeai --email $CLAUDE_EMAIL`, interactifs, à chaque
+  provisioning — sautés si déjà authentifié (`gh auth status`). `claude`
+  n'est pas un paquet pacman (zéro AUR) : installé via le script officiel
+  `curl.claude.ai/install.sh` s'il est absent. `CLAUDE_EMAIL` par défaut
+  celle de Julien — override via la variable d'env si besoin.
 - 🖥️ **Terminfo Ghostty** (`TERM=xterm-ghostty`) : Ghostty ne publie pas cette
   entrée en tant que source (générée à sa compilation), et `ghostty-terminfo`
   chez `[omarchy]` n'existe qu'en `ARCH=x86_64` alors que son contenu (juste
