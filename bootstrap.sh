@@ -861,9 +861,8 @@ do_theme() {
 
 # sshd/openssh n'a plus de raison d'être une fois Tailscale SSH actif : son
 # port 22 resterait ouvert hors tailnet, contradiction directe avec l'ACL.
-# N'est appelée qu'après confirmation que Tailscale SSH tourne (voir
-# do_tailscale) — jamais si --with-tailscale est absent, pour ne pas couper
-# le seul accès distant en place sans savoir si la tailnet a pris le relais.
+# N'est appelée qu'une fois la tailnet confirmée jointe (voir do_tailscale) —
+# jamais tant qu'on n'a pas la certitude que la tailnet a pris le relais.
 cleanup_sshd() {
   has sshd || return 0
   if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-enabled --quiet sshd 2>/dev/null; then
@@ -878,19 +877,22 @@ cleanup_sshd() {
 
 do_tailscale() {
   step "⑨" "Tailscale"
-  if ! (( WITH_TAILSCALE )); then
-    skip "opt-in — relance avec --with-tailscale (ou --only tailscale)"
-    return 0
-  fi
   has tailscale || die "tailscale non installé (étape ③)."
   asroot systemctl enable --now tailscaled
 
+  # opérateur/ssh/tag/cleanup sont idempotents : à rejouer à CHAQUE run dès
+  # que la tailnet est jointe, pas seulement le run où --with-tailscale a été
+  # passé — sinon un simple `mise run bootstrap` sans ce flag les saute tout
+  # le temps une fois la tailnet déjà rejointe une première fois.
   if ! (( DRY_RUN )) && tailscale status >/dev/null 2>&1; then
     ok "déjà connecté à la tailnet"
-  else
+  elif (( WITH_TAILSCALE )); then
     info "authentification interactive — l'IdP est en OTP seul (code par mail)"
     asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy
     ok "tailnet rejointe en tant que $TS_HOSTNAME (tag:omarchy)"
+  else
+    skip "opt-in — relance avec --with-tailscale (ou --only tailscale)"
+    return 0
   fi
 
   asroot tailscale set --operator="$DEVBOX_USER"
@@ -962,8 +964,11 @@ do_verify() {
   check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\":\"[^\"]*\"' | head -1"
-  has tailscale && check "tailscale ssh actif" "tailscale debug prefs 2>/dev/null | grep -q '\"RunSSH\":true' && echo actif"
-  has tailscale && check "opérateur tailscale" "tailscale debug prefs 2>/dev/null | grep -q \"\\\"OperatorUser\\\":\\\"\$(id -un)\\\"\" && id -un"
+  # `tailscale debug prefs` n'est PAS couvert par --operator (contrairement à
+  # up/set/status/ping) : sudo -n requis, échec propre (❌, texte visible) si
+  # NOPASSWD n'est pas actif plutôt qu'un grep -q muet sur une sortie vide.
+  has tailscale && check "tailscale ssh actif" "sudo -n tailscale debug prefs 2>&1 | grep -q '\"RunSSH\":true' && echo actif"
+  has tailscale && check "opérateur tailscale" "sudo -n tailscale debug prefs 2>&1 | grep -q \"\\\"OperatorUser\\\":\\\"\$(id -un)\\\"\" && id -un"
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
 
