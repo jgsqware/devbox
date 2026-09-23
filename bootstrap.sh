@@ -906,7 +906,11 @@ do_tailscale() {
 CHECK_FAIL=0
 check() { # check "libellé" "commande"
   local label="$1" cmd="$2" out rc
-  out="$(bash -c "$cmd" 2>&1)"; rc=$?
+  # `out=$(...)` seul plante tout le script sous `set -e` dès que $cmd
+  # échoue (l'affectation hérite du code de sortie) — un `if` l'exempte
+  # d'errexit, indispensable puisque check() sert justement à tolérer
+  # des échecs individuels sans interrompre la vérification.
+  if out="$(bash -c "$cmd" 2>&1)"; then rc=0; else rc=$?; fi
   if (( rc == 0 )); then
     printf '  %s✅%s %-42s %s%s%s\n' "$GRN" "$R" "$label" "$DIM" "${out:0:38}" "$R"
   else
@@ -928,7 +932,24 @@ do_verify() {
   is_wsl && check "wsl.conf: user par défaut" "grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf && grep -E '^[[:space:]]*default' /etc/wsl.conf"
   is_wsl && check "WSL ouvre en non-root (DefaultUid)" "test \"\$(id -u)\" -ne 0 && echo \"uid \$(id -u)\""
   check "dépôt [omarchy] signé"   "grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required' && echo 'Required'"
-  check "paquets manquants"       "test \$(comm -23 <(sed -e 's/#.*\$//' -e 's/[[:space:]]//g' '$PKG_FILE' | grep -v '^\$' | sort) <(pacman -Qq | sort) | grep -vx 'ufw' | wc -l) -eq 0 && echo '0 manquant'"
+  # ufw (WSL) et tout paquet que pacman -Si ne résout pas pour cet ARCH
+  # (indisponible — cf. do_packages `unavailable`, ou récupéré hors pacman
+  # via fetch_any_pkg comme omarchy-nvim en aarch64) ne peuvent structurellement
+  # pas apparaître dans `pacman -Qq` : les compter comme manquants est un faux négatif.
+  local missing_real missing_cmd
+  # || true : même piège errexit que check() ci-dessus — le code de sortie
+  # de la dernière itération du while (ex: dernier paquet non résolvable)
+  # se propagerait sinon à cette affectation et planterait tout le script.
+  missing_real="$(comm -23 <(pkg_list | sort) <(pacman -Qq | sort) | while read -r p; do
+    [[ "$p" == ufw ]] && is_wsl && continue
+    pacman -Si "$p" >/dev/null 2>&1 && printf '%s ' "$p"
+  done)" || true
+  if [[ -z "$missing_real" ]]; then
+    missing_cmd="echo '0 manquant'"
+  else
+    missing_cmd="printf '%s\n' $(printf '%q' "$missing_real"); exit 1"
+  fi
+  check "paquets manquants" "$missing_cmd"
   check "loader rc.d dans ~/.bashrc"  "grep -q 'devbox/rc.d' \"\$HOME/.bashrc\" && ls \"$RC_D\" | tr '\n' ' '"
   check "starship actif dans bash"  "bash -ic 'echo \"\${STARSHIP_SHELL:-KO}\"' 2>/dev/null | tail -1 | grep -qv KO && echo bash"
   check "prompt starship configuré" "test -r \"\$HOME/.config/starship.toml\" && head -1 \"\$HOME/.config/starship.toml\""
