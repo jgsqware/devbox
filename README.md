@@ -140,17 +140,18 @@ intact.
   `omarchy-nvim`, `mise-bin`, `yay`).
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
-- 🔒 **Pas de sshd/openssh** : l'accès distant passe uniquement par **Tailscale
-  SSH** (`--ssh`, étape `tailscale`) — aucun port 22 ouvert hors tailnet,
-  l'ACL Tailscale fait office de pare-feu. `--operator=$DEVBOX_USER` évite le
-  `sudo` pour `tailscale up/set/status` au quotidien. La machine s'annonce
-  avec `--advertise-tags=tag:omarchy` (nécessite `tagOwners` dans l'ACL). Les
-  trois sont posés en **un seul `tailscale up`**, jamais via `set` : `up` en
-  reconfiguration exige de re-mentionner tous les prefs non-défaut déjà actifs
-  ("requires mentioning all non-default flags"), et `--advertise-tags`
-  n'existe de toute façon que sur `up`, pas `set`. Un `sshd` hérité d'un
-  provisioning antérieur est désactivé + son paquet `openssh` retiré, une
-  fois Tailscale SSH confirmé actif.
+- 🔒 **Pas de serveur sshd** : l'accès distant **entrant** passe uniquement
+  par **Tailscale SSH** (`--ssh`, étape `tailscale`) — aucun port 22 ouvert
+  hors tailnet, l'ACL Tailscale fait office de pare-feu. `--operator=$DEVBOX_USER`
+  évite le `sudo` pour `tailscale up/set/status` au quotidien. La machine
+  s'annonce avec `--advertise-tags=tag:omarchy` (nécessite `tagOwners` dans
+  l'ACL). Les trois sont posés en **un seul `tailscale up`**, jamais via
+  `set` : `up` en reconfiguration exige de re-mentionner tous les prefs
+  non-défaut déjà actifs ("requires mentioning all non-default flags"), et
+  `--advertise-tags` n'existe de toute façon que sur `up`, pas `set`. Un
+  `sshd` hérité d'un provisioning antérieur est désactivé (le service
+  uniquement) une fois Tailscale SSH confirmé actif — le paquet `openssh`
+  reste installé, il fournit aussi le CLIENT `ssh` (git en ssh, etc.).
 - 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et
   `claude auth login --claudeai --email $CLAUDE_EMAIL`, interactifs, à chaque
   provisioning — sautés si déjà authentifié (`gh auth status` /

@@ -868,24 +868,23 @@ do_theme() {
 }
 
 # ========================================================== ⑨ tailscale =====
-# Pas de sshd/openssh : le seul accès distant voulu est via la tailnet, donc
+# Pas de SERVEUR sshd : le seul accès entrant voulu est via la tailnet, donc
 # c'est Tailscale SSH (`tailscale up --ssh`) qui sert — pas de port 22 ouvert
 # ailleurs, l'ACL de la tailnet fait office de pare-feu. `--operator` évite
-# d'avoir à sudo pour tailscale up/set/status au quotidien.
+# d'avoir à sudo pour tailscale up/set/status au quotidien. Le paquet openssh
+# reste installé : il fournit aussi le CLIENT `ssh` (git clone en ssh, etc.),
+# qu'on ne veut surtout pas retirer — seul le service sshd est désactivé.
 
-# sshd/openssh n'a plus de raison d'être une fois Tailscale SSH actif : son
-# port 22 resterait ouvert hors tailnet, contradiction directe avec l'ACL.
-# N'est appelée qu'une fois la tailnet confirmée jointe (voir do_tailscale) —
+# sshd (le service, pas le paquet openssh — le binaire client ssh reste utile)
+# n'a plus de raison de tourner une fois Tailscale SSH actif : son port 22
+# resterait ouvert hors tailnet, contradiction directe avec l'ACL. N'est
+# appelée qu'une fois la tailnet confirmée jointe (voir do_tailscale) —
 # jamais tant qu'on n'a pas la certitude que la tailnet a pris le relais.
 cleanup_sshd() {
   has sshd || return 0
   if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-enabled --quiet sshd 2>/dev/null; then
     asroot systemctl disable --now sshd
-    ok "sshd désactivé — accès distant 100% Tailscale SSH"
-  fi
-  if pacman -Qq openssh >/dev/null 2>&1; then
-    asroot pacman -Rns --noconfirm openssh
-    ok "paquet openssh retiré"
+    ok "sshd désactivé — accès distant 100% Tailscale SSH (client ssh conservé)"
   fi
 }
 
@@ -1041,6 +1040,7 @@ do_verify() {
   has tailscale && check "opérateur tailscale" "sudo -n tailscale debug prefs 2>&1 | grep -q \"\\\"OperatorUser\\\": *\\\"\$(id -un)\\\"\" && id -un"
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
+  check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"

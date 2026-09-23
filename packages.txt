@@ -1,5 +1,5 @@
 # devbox — liste écrémée (réf. analyse §10.3 + §11.9)
-# 48 paquets, ZÉRO AUR. Seuls 3 viennent du dépôt [omarchy].
+# 49 paquets, ZÉRO AUR. Seuls 3 viennent du dépôt [omarchy].
 # Tout ajout ici se propage à tous les nœuds : c'est la source de vérité.
 
 # --- socle ---------------------------------------------------------------
@@ -65,3 +65,4 @@ yay                   # dépôt [omarchy]
 1password-cli
 tailscale
 ufw                   # auto-skippé sur WSL (pas de netfilter persistant)
+openssh               # binaire ssh (client) — sshd désactivé par cleanup_sshd
