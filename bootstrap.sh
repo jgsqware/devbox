@@ -38,7 +38,7 @@ PKG_FILE="$SCRIPT_DIR/packages.txt"
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell theme ssh tailscale verify)
 DRY_RUN=0
 FORCE_SKEL=0
 WITH_TAILSCALE=0
@@ -154,7 +154,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale verify
+Étapes : user prereq repo packages locale hostname skel vendor shell theme ssh tailscale verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -167,6 +167,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
   shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
+  ssh       sshd activé (openssh) — accès distant dès le provisioning
   tailscale tailscaled + tailscale up   (opt-in)
   verify    la table de vérification de fin
 
@@ -811,8 +812,15 @@ do_theme() {
 }
 
 # ========================================================== ⑨ tailscale =====
+do_ssh() {
+  step "⑨" "sshd (openssh)"
+  has sshd || die "openssh non installé (étape ③)."
+  asroot systemctl enable --now sshd
+  ok "sshd actif — accès distant possible dès ce nœud"
+}
+
 do_tailscale() {
-  step "⑨" "Tailscale"
+  step "⑩" "Tailscale"
   if ! (( WITH_TAILSCALE )); then
     skip "opt-in — relance avec --with-tailscale (ou --only tailscale)"
     return 0
@@ -829,7 +837,7 @@ do_tailscale() {
   fi
 }
 
-# ============================================================= ⑩ verify =====
+# ============================================================= ⑪ verify =====
 CHECK_FAIL=0
 check() { # check "libellé" "commande"
   local label="$1" cmd="$2" out rc
@@ -843,7 +851,7 @@ check() { # check "libellé" "commande"
 }
 
 do_verify() {
-  step "⑩" "Vérification"
+  step "⑪" "Vérification"
   export OMARCHY_PATH="$OMARCHY_HOME"
   export OMARCHY_THEME_HEADLESS=1
   export PATH="$OMARCHY_HOME/bin:$PATH"
@@ -866,6 +874,7 @@ do_verify() {
   check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l 2>/dev/null)\" && echo '0 lien mort'"
   check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
+  has sshd      && check "sshd actif" "systemctl is-active sshd >/dev/null 2>&1 && systemctl is-active sshd"
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\":\"[^\"]*\"' | head -1"
 
   printf '\n'
@@ -899,6 +908,7 @@ main() {
       vendor)    do_vendor ;;
       shell)     do_shell ;;
       theme)     do_theme ;;
+      ssh)       do_ssh ;;
       tailscale) do_tailscale ;;
       verify)    do_verify ;;
     esac
