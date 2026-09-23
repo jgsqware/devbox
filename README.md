@@ -141,7 +141,10 @@ intact.
 - 🔒 **Pas de sshd/openssh** : l'accès distant passe uniquement par **Tailscale
   SSH** (`tailscale set --ssh`, étape `tailscale`) — aucun port 22 ouvert hors
   tailnet, l'ACL Tailscale fait office de pare-feu. `tailscale set --operator=$DEVBOX_USER`
-  évite le `sudo` pour `tailscale up/set/status` au quotidien.
+  évite le `sudo` pour `tailscale up/set/status` au quotidien. La machine
+  s'annonce avec `--advertise-tags=tag:omarchy` (nécessite `tagOwners` dans
+  l'ACL). Un `sshd` hérité d'un provisioning antérieur est désactivé + son
+  paquet `openssh` retiré, une fois Tailscale SSH confirmé actif.
 - 🖥️ **Terminfo Ghostty** (`TERM=xterm-ghostty`) : Ghostty ne publie pas cette
   entrée en tant que source (générée à sa compilation), et `ghostty-terminfo`
   chez `[omarchy]` n'existe qu'en `ARCH=x86_64` alors que son contenu (juste

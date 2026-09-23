@@ -858,6 +858,24 @@ do_theme() {
 # c'est Tailscale SSH (`tailscale set --ssh`) qui sert — pas de port 22 ouvert
 # ailleurs, l'ACL de la tailnet fait office de pare-feu. `--operator` évite
 # d'avoir à sudo pour tailscale up/set/status au quotidien.
+
+# sshd/openssh n'a plus de raison d'être une fois Tailscale SSH actif : son
+# port 22 resterait ouvert hors tailnet, contradiction directe avec l'ACL.
+# N'est appelée qu'après confirmation que Tailscale SSH tourne (voir
+# do_tailscale) — jamais si --with-tailscale est absent, pour ne pas couper
+# le seul accès distant en place sans savoir si la tailnet a pris le relais.
+cleanup_sshd() {
+  has sshd || return 0
+  if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-enabled --quiet sshd 2>/dev/null; then
+    asroot systemctl disable --now sshd
+    ok "sshd désactivé — accès distant 100% Tailscale SSH"
+  fi
+  if pacman -Qq openssh >/dev/null 2>&1; then
+    asroot pacman -Rns --noconfirm openssh
+    ok "paquet openssh retiré"
+  fi
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   if ! (( WITH_TAILSCALE )); then
@@ -871,13 +889,17 @@ do_tailscale() {
     ok "déjà connecté à la tailnet"
   else
     info "authentification interactive — l'IdP est en OTP seul (code par mail)"
-    asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true
-    ok "tailnet rejointe en tant que $TS_HOSTNAME"
+    asroot tailscale up --hostname="$TS_HOSTNAME" --accept-dns=true --advertise-tags=tag:omarchy
+    ok "tailnet rejointe en tant que $TS_HOSTNAME (tag:omarchy)"
   fi
 
   asroot tailscale set --operator="$DEVBOX_USER"
   asroot tailscale set --ssh
-  ok "opérateur $DEVBOX_USER + Tailscale SSH actifs — accès distant réservé à la tailnet"
+  asroot tailscale set --advertise-tags=tag:omarchy \
+    || warn "tag:omarchy non appliqué — vérifie tagOwners dans l'ACL Tailscale"
+  ok "opérateur $DEVBOX_USER + Tailscale SSH + tag:omarchy actifs"
+
+  cleanup_sshd
 }
 
 # ============================================================= ⑩ verify =====
@@ -921,6 +943,8 @@ do_verify() {
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\":\"[^\"]*\"' | head -1"
   has tailscale && check "tailscale ssh actif" "tailscale debug prefs 2>/dev/null | grep -q '\"RunSSH\":true' && echo actif"
   has tailscale && check "opérateur tailscale" "tailscale debug prefs 2>/dev/null | grep -q \"\\\"OperatorUser\\\":\\\"\$(id -un)\\\"\" && id -un"
+  has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
+  check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
 
   printf '\n'
   if (( CHECK_FAIL )); then
