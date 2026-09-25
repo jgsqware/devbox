@@ -919,7 +919,7 @@ EOF
 # touche qu'au hostname coloré du prompt, en place et avec sauvegarde de
 # starship.toml avant la toute première modification.
 do_shell_light() {
-  step "⑦" "Prompt : hostname coloré (Omarchy détecté — reste de l'étape sauté)"
+  step "⑦" "Prompt hostname + atuin (Omarchy détecté — reste de l'étape sauté)"
   local toml="$HOME/.config/starship.toml"
   if [[ -f "$toml" ]] && ! grep -q '^format.*\$hostname' "$toml"; then
     run mkdir -p "$BACKUP_DIR/.config"
@@ -927,6 +927,33 @@ do_shell_light() {
     info "sauvegarde: $BACKUP_DIR/.config/starship.toml"
   fi
   configure_starship_hostname
+
+  # atuin : SEUL rc.d posé ici — 10-env.sh forcerait OMARCHY_THEME_HEADLESS=1 et
+  # un OMARCHY_PATH devbox, faux sur un vrai Omarchy. Le loader est AJOUTÉ à
+  # ~/.bashrc (jamais réécrit), avec sauvegarde, s'il n'y est pas déjà.
+  local rc_src="$OVERLAY_DIR/bash/rc.d/30-atuin.sh"
+  if [[ -r "$rc_src" ]]; then
+    run mkdir -p "$RC_D"
+    run cp -af "$rc_src" "$RC_D/30-atuin.sh"
+    if grep -q 'devbox/rc.d' "$HOME/.bashrc" 2>/dev/null; then
+      ok "atuin : loader rc.d déjà dans ~/.bashrc"
+    elif (( DRY_RUN )); then
+      info "atuin : aurait ajouté le loader rc.d à ~/.bashrc"
+    else
+      if [[ -f "$HOME/.bashrc" ]]; then
+        mkdir -p "$BACKUP_DIR"; cp -a "$HOME/.bashrc" "$BACKUP_DIR/.bashrc"
+        info "sauvegarde: $BACKUP_DIR/.bashrc"
+      fi
+      printf '%s\n' '
+# >>> devbox >>>
+for _devbox_rc in "$HOME"/.config/devbox/rc.d/*.sh; do
+  [[ -r "$_devbox_rc" ]] && source "$_devbox_rc"
+done
+unset _devbox_rc
+# <<< devbox <<<' >> "$HOME/.bashrc"
+      ok "atuin : loader rc.d ajouté à ~/.bashrc"
+    fi
+  fi
 }
 
 do_shell() {
@@ -1206,6 +1233,7 @@ do_verify() {
   (( full )) && check "nvim démarre proprement" "nvim --headless +qa 2>&1 && echo 'exit 0'"
   check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l 2>/dev/null)\" && echo '0 lien mort'"
   (( full )) && check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
+  has atuin     && check "atuin"                "atuin --version"
   has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\": *\"[^\"]*\"' | head -1"
   # `tailscale debug prefs` n'est PAS couvert par --operator (contrairement à

@@ -115,6 +115,7 @@ Tout le reste vit dans des fichiers versionnés, chargés **dans l'ordre des nom
 |---|---|---|
 | `10-env.sh` | `OMARCHY_PATH`, `OMARCHY_THEME_HEADLESS`, `PATH` (idempotent) | ✅ |
 | `20-start-dir.sh` | sous WSL, revient dans `$HOME` quand le shell démarre dans `/mnt/*` | ✅ |
+| `30-atuin.sh` | `atuin init bash` : historique (Ctrl-R, ↑), chargé après fzf donc il reprend Ctrl-R | ✅ |
 | `05-local-start-dir.sh` | posé par `--start-dir`, propre au nœud | ❌ local |
 
 Ajouter un réglage = déposer un `NN-truc.sh` dans `overlay/bash/rc.d/` et rejouer
@@ -162,7 +163,8 @@ intact.
   casserait dessus. Restent `repo`, `packages`, `tailscale`, `cli-auth`,
   `verify` (dont les contrôles propres à un devbox complet sont masqués), plus
   le hostname coloré du prompt, patché **en place** dans `starship.toml` avec
-  sauvegarde préalable. `--only <étape protégée>` est refusé ; `--force-full`
+  sauvegarde préalable, et `atuin` (seul `rc.d` déposé, plus un loader **ajouté**
+  à `~/.bashrc`, sauvegardé avant). `--only <étape protégée>` est refusé ; `--force-full`
   ignore la détection et rejoue tout (écrase la config Omarchy).
 - 🚫 **Ne converge jamais** : identité git, clés SSH/GPG, tokens, historique shell,
   `~/.claude/`, `/work`, `/leases`.
