@@ -515,13 +515,21 @@ def cmd_pick(themes, reload=True):
 def cmd_self_update():
     """Télécharge le script PAR COMMIT : l'URL raw …/main/… est servie depuis
     un cache CDN de 5 min (cache-control: max-age=300), donc juste après un
-    push elle rend encore l'ancienne version. L'API donne le sha à jour."""
-    r = subprocess.run(["curl", "-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github.sha",
-                        f"https://api.github.com/repos/{SELF_REPO}/commits/main"],
-                       capture_output=True, text=True)
-    sha = r.stdout.strip()
-    if r.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", sha):
-        die("impossible de lire le dernier commit sur l'API GitHub (réseau ou quota)")
+    push elle rend encore l'ancienne version. Le sha vient de `git ls-remote`,
+    qui lit la branche sur le serveur git sans cache — l'API REST, elle, a pu
+    renvoyer l'ancien commit quelques secondes après un push (vu : downgrade)."""
+    sha = ""
+    if shutil.which("git"):
+        r = subprocess.run(["git", "ls-remote", f"https://github.com/{SELF_REPO}", "refs/heads/main"],
+                           capture_output=True, text=True, timeout=30)
+        sha = r.stdout.split()[0] if r.returncode == 0 and r.stdout.split() else ""
+    if not sha:                                 # secours : API REST (peut avoir un léger retard)
+        r = subprocess.run(["curl", "-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github.sha",
+                            f"https://api.github.com/repos/{SELF_REPO}/commits/main"],
+                           capture_output=True, text=True)
+        sha = r.stdout.strip() if r.returncode == 0 else ""
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        die("impossible de lire le dernier commit de devbox (réseau ?)")
     new = fetch(f"https://raw.githubusercontent.com/{SELF_REPO}/{sha}/{SELF_PATH}")
     if not new or not new.startswith("#!/usr/bin/env python3"):
         die(f"téléchargement du script échoué ({sha[:7]})")
