@@ -1135,8 +1135,19 @@ do_tailscale() {
 
   if ! (( DRY_RUN )) && tailscale status >/dev/null 2>&1; then
     ok "déjà connecté à la tailnet"
-    asroot tailscale up "${up_flags[@]}" \
-      || warn "mise à jour tailscale up a échoué — relance à la main : tailscale up ${up_flags[*]}"
+    # prefs locales qu'on ne gère pas mais que `up` exige de re-mentionner :
+    # un nœud avec --accept-routes (posé à la main) faisait échouer le up.
+    asroot tailscale debug prefs 2>/dev/null | grep -q '"RouteAll": *true' && up_flags+=(--accept-routes)
+    if ! asroot tailscale up "${up_flags[@]}"; then
+      # SURTOUT ne pas enchaîner sur cleanup_sshd : sans Tailscale SSH actif,
+      # couper sshd laisse la machine sans aucun accès distant. Cas typique :
+      # session en cours via sshd sur la tailnet → tailscale refuse de la
+      # couper sans --accept-risk=lose-ssh (voulu : on ne la coupe pas en auto).
+      warn "tailscale up a échoué — sshd CONSERVÉ. Depuis une session locale (ou tmux) :
+  sudo tailscale up ${up_flags[*]} --accept-risk=lose-ssh"
+      open_mosh_ufw
+      return 0
+    fi
   elif (( WITH_TAILSCALE )); then
     info "authentification interactive — l'IdP est en OTP seul (code par mail)"
     asroot tailscale up "${up_flags[@]}"
@@ -1146,9 +1157,12 @@ do_tailscale() {
     return 0
   fi
 
-  ok "opérateur $DEVBOX_USER + Tailscale SSH actifs (tag:omarchy)"
-
-  cleanup_sshd
+  if (( DRY_RUN )) || asroot tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": *true'; then
+    ok "opérateur $DEVBOX_USER + Tailscale SSH actifs (tag:omarchy)"
+    cleanup_sshd
+  else
+    warn "Tailscale SSH toujours inactif après tailscale up — sshd CONSERVÉ"
+  fi
   open_mosh_ufw
 }
 
@@ -1264,7 +1278,9 @@ do_verify() {
   is_wsl && check "systemd actif" "systemctl is-system-running | grep -qE 'running|degraded' && systemctl is-system-running"
   is_wsl && check "wsl.conf: user par défaut" "grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf && grep -E '^[[:space:]]*default' /etc/wsl.conf"
   is_wsl && check "WSL ouvre en non-root (DefaultUid)" "test \"\$(id -u)\" -ne 0 && echo \"uid \$(id -u)\""
-  check "dépôt [omarchy] signé"   "grep -A3 '^\[omarchy\]' /etc/pacman.conf | grep -q 'SigLevel = Required' && echo 'Required'"
+  # SigLevel EFFECTIF : celui de la section [omarchy], sinon celui hérité de
+  # [options] (vrai Omarchy : pas de SigLevel dans la section, Required global).
+  check "dépôt [omarchy] signé"   "awk '/^\[/{sec=\$0} /^[[:space:]]*SigLevel/{if(sec==\"[options]\")g=\$0; if(sec==\"[omarchy]\")o=\$0} END{l=(o!=\"\"?o:g); if(l~/Required/){print l; exit 0}; exit 1}' /etc/pacman.conf"
   # ufw (WSL) et tout paquet que pacman -Si ne résout pas pour cet ARCH
   # (indisponible — cf. do_packages `unavailable`, ou récupéré hors pacman
   # via fetch_any_pkg comme omarchy-nvim en aarch64) ne peuvent structurellement
@@ -1295,10 +1311,12 @@ do_verify() {
   (( full )) && check "configs /etc/skel"       "test -d \"\$HOME/.config/nvim\" && du -sh \"\$HOME/.config/nvim\" | cut -f1"
   (( full )) && check "plugins nvim pré-cachés" "test \$(ls \"\$HOME/.local/share/nvim/lazy\" 2>/dev/null | wc -l) -ge 40 && ls \"\$HOME/.local/share/nvim/lazy\" | wc -l"
   (( full )) && check "nvim démarre proprement" "nvim --headless +qa 2>&1 && echo 'exit 0'"
-  check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l 2>/dev/null)\" && echo '0 lien mort'"
+  # verrous/sockets runtime d'applis de bureau (Chromium Singleton*, pulse
+  # *-runtime) : liens morts par nature dès que l'appli est fermée — pas un défaut.
+  check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l -not -name 'Singleton*' -not -name '*-runtime' 2>/dev/null)\" && echo '0 lien mort'"
   (( full )) && check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has atuin     && check "atuin"                "atuin --version"
-  has zellij    && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
+  (( full )) && has zellij && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
   has tailscale && check "tailscale" "tailscale status >/dev/null 2>&1 && tailscale status --json | grep -o '\"BackendState\": *\"[^\"]*\"' | head -1"
   # `tailscale debug prefs` n'est PAS couvert par --operator (contrairement à
   # up/set/status/ping) : sudo -n requis, échec propre (❌, texte visible) si
