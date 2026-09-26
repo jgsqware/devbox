@@ -76,6 +76,7 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `overlay/omarchy/themed/*.tpl` | cibles de thème supplémentaires (zellij) |
 | `overlay/terminfo/xterm-ghostty.terminfo` | entrée terminfo Ghostty, compilée par `tic` à l'étape ⑦ |
 | `sync-fleet.sh` | rejoue le bootstrap sur toutes les machines `tag:omarchy` de la tailnet (`mise run sync`) |
+| `TODO.md` | tâches en attente sur la flotte |
 | `hooks/post-commit` | après un commit sur `main` : push + `sync-fleet.sh` en arrière-plan (`mise run hooks` pour l'activer) |
 
 ## D'où vient le prompt
@@ -187,15 +188,18 @@ intact.
   ouvre UDP 60000-61000 **sur `tailscale0` uniquement**. Côté client,
   `s <hôte> [cmd]` (`overlay/bash/rc.d/30-remote.sh`) prend mosh si mosh est
   installé en local ET `mosh-server` présent sur l'hôte (sondé une fois par
-  shell), sinon ssh. `DEVBOX_REMOTE=ssh` force ssh. Sur un vrai Omarchy,
-  l'étape `shell` est sautée : `s` n'y est pas déployé.
-- 🔁 **Sync de la flotte** : `hooks/post-commit` (activé par `mise run hooks`
-  = `git config core.hooksPath hooks`) pousse chaque commit sur `main`, puis
-  lance `sync-fleet.sh` en arrière-plan : `tailscale ssh` vers chaque machine
-  `tag:omarchy` en ligne → `git pull --ff-only && ./bootstrap.sh --skip cli-auth`,
+  shell), sinon ssh. `DEVBOX_REMOTE=ssh` force ssh. Déployé aussi sur un
+  vrai Omarchy (comme atuin : `OMARCHY_SAFE_RC` + loader ajouté à `~/.bashrc`).
+- 🔁 **Sync de la flotte, dans tous les sens** : l'étape `hooks` pose
+  `core.hooksPath=hooks` sur **chaque** clone (et branche `gh` comme helper
+  git pour pousser sans terminal). Un commit sur `main`, depuis n'importe quel
+  nœud, pousse puis lance `sync-fleet.sh` en arrière-plan : `tailscale ssh`
+  vers chaque machine `tag:omarchy` en ligne, **et la machine locale**
+  (`DEVBOX_SYNC_SELF=0` pour l'exclure) → `git pull --ff-only && ./bootstrap.sh --skip cli-auth`,
   en parallèle. Non interactif : il faut `sudo` sans mot de passe sur l'hôte
   (`--sudo-nopasswd`), sinon échec signalé ; un hôte sans `~/devbox` est
-  ignoré. Logs dans `~/.local/state/devbox/sync/latest/`, résumé en
+  ignoré ; `DEVBOX_SYNC_EXCLUDE` (défaut `obsidian-mcp`) retire des machines
+  taguées qui ne sont pas des devbox. Logs dans `~/.local/state/devbox/sync/latest/`, résumé en
   `notify-send`. `DEVBOX_NO_SYNC=1 git commit …` pour ne pas synchroniser.
 - 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et
   `claude auth login --claudeai --email $CLAUDE_EMAIL`, interactifs, à chaque

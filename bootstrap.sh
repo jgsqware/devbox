@@ -51,7 +51,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -60,6 +60,8 @@ OMARCHY_WHY=""
 # étapes qui ÉCRASENT ce qu'un vrai Omarchy gère lui-même (locale, /etc/skel,
 # moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
 OMARCHY_PROTECTED=(locale skel vendor shell theme)
+# rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
+OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 SUDO_NOPASSWD=0
 NO_REEXEC=0
@@ -199,7 +201,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth verify
+Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -214,6 +216,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
+  hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
 Lancé en ROOT, le script s'arrête après `prereq` : il crée l'utilisateur puis
@@ -930,7 +933,7 @@ EOF
 # touche qu'au hostname coloré du prompt, en place et avec sauvegarde de
 # starship.toml avant la toute première modification.
 do_shell_light() {
-  step "⑦" "Prompt hostname + atuin (Omarchy détecté — reste de l'étape sauté)"
+  step "⑦" "Prompt hostname + rc.d atuin/s (Omarchy détecté — reste de l'étape sauté)"
   local toml="$HOME/.config/starship.toml"
   if [[ -f "$toml" ]] && ! grep -q '^format.*\$hostname' "$toml"; then
     run mkdir -p "$BACKUP_DIR/.config"
@@ -939,31 +942,36 @@ do_shell_light() {
   fi
   configure_starship_hostname
 
-  # atuin : SEUL rc.d posé ici — 10-env.sh forcerait OMARCHY_THEME_HEADLESS=1 et
-  # un OMARCHY_PATH devbox, faux sur un vrai Omarchy. Le loader est AJOUTÉ à
-  # ~/.bashrc (jamais réécrit), avec sauvegarde, s'il n'y est pas déjà.
-  local rc_src="$OVERLAY_DIR/bash/rc.d/30-atuin.sh"
-  if [[ -r "$rc_src" ]]; then
-    run mkdir -p "$RC_D"
-    run cp -af "$rc_src" "$RC_D/30-atuin.sh"
-    if grep -q 'devbox/rc.d' "$HOME/.bashrc" 2>/dev/null; then
-      ok "atuin : loader rc.d déjà dans ~/.bashrc"
-    elif (( DRY_RUN )); then
-      info "atuin : aurait ajouté le loader rc.d à ~/.bashrc"
-    else
-      if [[ -f "$HOME/.bashrc" ]]; then
-        mkdir -p "$BACKUP_DIR"; cp -a "$HOME/.bashrc" "$BACKUP_DIR/.bashrc"
-        info "sauvegarde: $BACKUP_DIR/.bashrc"
-      fi
-      printf '%s\n' '
+  # rc.d « sûrs » sur un vrai Omarchy : SEULS ceux-là sont posés ici —
+  # 10-env.sh forcerait OMARCHY_THEME_HEADLESS=1 et un OMARCHY_PATH devbox,
+  # faux sur un vrai Omarchy. Le loader est AJOUTÉ à ~/.bashrc (jamais
+  # réécrit), avec sauvegarde, s'il n'y est pas déjà.
+  local f copied=()
+  run mkdir -p "$RC_D"
+  for f in "${OMARCHY_SAFE_RC[@]}"; do
+    [[ -r "$OVERLAY_DIR/bash/rc.d/$f" ]] || continue
+    run cp -af "$OVERLAY_DIR/bash/rc.d/$f" "$RC_D/$f"
+    copied+=("$f")
+  done
+  (( ${#copied[@]} )) || return 0
+  ok "rc.d déposés → $RC_D : ${copied[*]}"
+  if grep -q 'devbox/rc.d' "$HOME/.bashrc" 2>/dev/null; then
+    ok "loader rc.d déjà dans ~/.bashrc"
+  elif (( DRY_RUN )); then
+    info "aurait ajouté le loader rc.d à ~/.bashrc"
+  else
+    if [[ -f "$HOME/.bashrc" ]]; then
+      mkdir -p "$BACKUP_DIR"; cp -a "$HOME/.bashrc" "$BACKUP_DIR/.bashrc"
+      info "sauvegarde: $BACKUP_DIR/.bashrc"
+    fi
+    printf '%s\n' '
 # >>> devbox >>>
 for _devbox_rc in "$HOME"/.config/devbox/rc.d/*.sh; do
   [[ -r "$_devbox_rc" ]] && source "$_devbox_rc"
 done
 unset _devbox_rc
 # <<< devbox <<<' >> "$HOME/.bashrc"
-      ok "atuin : loader rc.d ajouté à ~/.bashrc"
-    fi
+    ok "loader rc.d ajouté à ~/.bashrc"
   fi
 }
 
@@ -1190,7 +1198,36 @@ do_cli_auth() {
   fi
 }
 
-# ============================================================= ⑪ verify =====
+# ============================================================== ⑪ hooks =====
+# Chaque clone porte le hook post-commit : un commit sur N'IMPORTE quel nœud
+# pousse puis resynchronise toute la flotte (sync dans tous les sens). Pour
+# pousser sans terminal, git a besoin d'identifiants : on branche gh comme
+# helper HTTPS s'il est authentifié et qu'aucun helper n'est déjà en place.
+do_hooks() {
+  step "⑪" "Git hook (commit → push → sync de la flotte)"
+  if ! git -C "$SCRIPT_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    skip "$SCRIPT_DIR n'est pas un clone git — hook sans objet"
+    return 0
+  fi
+  if [[ "$(git -C "$SCRIPT_DIR" config --get core.hooksPath)" == hooks ]]; then
+    ok "hook déjà actif (core.hooksPath=hooks)"
+  else
+    run git -C "$SCRIPT_DIR" config core.hooksPath hooks
+    ok "hook activé (core.hooksPath=hooks)"
+  fi
+
+  if git -C "$SCRIPT_DIR" config --get-urlmatch credential.helper https://github.com >/dev/null 2>&1 \
+     || [[ "$(git -C "$SCRIPT_DIR" remote get-url --push origin 2>/dev/null)" == git@* ]]; then
+    ok "push : identifiants déjà configurés"
+  elif has gh && gh auth status >/dev/null 2>&1; then
+    run gh auth setup-git
+    ok "push : gh branché comme helper git (HTTPS)"
+  else
+    warn "push impossible sans terminal (gh non authentifié) — le hook ne pourra pas synchroniser depuis ce nœud"
+  fi
+}
+
+# ============================================================= ⑫ verify =====
 CHECK_FAIL=0
 check() { # check "libellé" "commande"
   local label="$1" cmd="$2" out rc
@@ -1208,7 +1245,7 @@ check() { # check "libellé" "commande"
 }
 
 do_verify() {
-  step "⑪" "Vérification"
+  step "⑫" "Vérification"
   # contrôles propres à un devbox provisionné de bout en bout : sans objet sur
   # un vrai Omarchy, dont devbox n'a volontairement pas touché skel/bashrc/thème.
   local full=1
@@ -1271,6 +1308,7 @@ do_verify() {
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
+  check "git hook actif"          "test \"\$(git -C '$SCRIPT_DIR' config --get core.hooksPath)\" = hooks && echo hooks"
   check "mosh-server présent"     "command -v mosh-server >/dev/null 2>&1 && mosh-server --version 2>&1 | head -1"
   check "yay présent"             "command -v yay >/dev/null 2>&1 && yay --version 2>&1 | head -1"
   # worktrunk-bin installe le binaire `wt`, pas `worktrunk` — via pacman
@@ -1330,6 +1368,7 @@ main() {
       theme)     do_theme ;;
       tailscale) do_tailscale ;;
       cli-auth)  do_cli_auth ;;
+      hooks)     do_hooks ;;
       verify)    do_verify ;;
     esac
     # en root, tout ce qui suit prereq écrit dans $HOME : on bascule

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # devbox/sync-fleet.sh — rejoue le bootstrap sur toutes les machines de la
-# tailnet taguées tag:omarchy (en ligne, sauf celle-ci), en parallèle.
+# tailnet taguées tag:omarchy (en ligne), en parallèle — CELLE-CI COMPRISE :
+# le hook post-commit est posé sur chaque nœud, un commit fait n'importe où
+# resynchronise toute la flotte, y compris la machine d'où il part.
 #
 #   ./sync-fleet.sh              toutes les machines tag:omarchy
 #   ./sync-fleet.sh mini iba     seulement celles-là (noms tailnet)
+#   DEVBOX_SYNC_EXCLUDE="a b"    machines exclues (défaut : obsidian-mcp)
+#   DEVBOX_SYNC_SELF=0           ne pas rejouer le bootstrap sur cette machine
 #   mise run sync
 #
 # Sur chaque hôte, via `tailscale ssh` : cd ~/devbox && git pull --ff-only
@@ -20,17 +24,25 @@ set -uo pipefail
 TAG="${DEVBOX_SYNC_TAG:-tag:omarchy}"
 REMOTE_USER="${DEVBOX_USER:-jgsqware}"
 TIMEOUT="${DEVBOX_SYNC_TIMEOUT:-30m}"                  # par hôte
+# taguées tag:omarchy mais PAS des devbox à resynchroniser (noms courts, espaces)
+EXCLUDE="${DEVBOX_SYNC_EXCLUDE-obsidian-mcp}"
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/devbox/sync/$(date +%Y%m%d-%H%M%S)"
 
 command -v tailscale >/dev/null && command -v jq >/dev/null \
   || { echo "tailscale et jq requis" >&2; exit 1; }
 
+SELF=""
 if (( $# )); then
   hosts=("$@")
 else
-  mapfile -t hosts < <(tailscale status --json | jq -r --arg tag "$TAG" '
-    .Peer[] | select(.Online and ((.Tags // []) | index($tag))) | .DNSName | rtrimstr(".")')
+  (( ${DEVBOX_SYNC_SELF:-1} )) && SELF="$(tailscale status --self --json | jq -r --arg tag "$TAG" '
+    .Self | select((.Tags // []) | index($tag)) | .DNSName | rtrimstr(".")')"
+  mapfile -t hosts < <(tailscale status --json | jq -r --arg tag "$TAG" --arg ex "$EXCLUDE" '
+    ($ex | split(" ") | map(select(. != ""))) as $skip
+    | .Peer[] | select(.Online and ((.Tags // []) | index($tag)))
+    | .DNSName | rtrimstr(".") | select((split(".")[0]) as $n | $skip | index($n) | not)')
 fi
+[[ -n "$SELF" ]] && hosts+=("$SELF")
 (( ${#hosts[@]} )) || { echo "aucune machine $TAG en ligne"; exit 0; }
 
 mkdir -p "$LOG_DIR"
@@ -57,8 +69,13 @@ for h in "${hosts[@]}"; do
   # tailscale ssh (pas ssh) : vérifie la clé d'hôte annoncée par la tailnet —
   # un ssh nu en BatchMode échoue sur "Host key verification failed" pour
   # tout hôte jamais visité. Il n'accepte pas -o : timeout borne la durée.
-  timeout "$TIMEOUT" tailscale ssh "$REMOTE_USER@$h" "bash -lc $(printf '%q' "$remote")" \
-    </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
+  if [[ "$h" == "$SELF" ]]; then
+    # soi-même : même script, en local — pas de ssh vers sa propre machine
+    timeout "$TIMEOUT" bash -lc "$remote" </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
+  else
+    timeout "$TIMEOUT" tailscale ssh "$REMOTE_USER@$h" "bash -lc $(printf '%q' "$remote")" \
+      </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
+  fi
   pids[$h]=$!
 done
 
