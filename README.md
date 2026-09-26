@@ -98,6 +98,7 @@ omarchy-ghostty-theme set "tokyo night"
 omarchy-ghostty-theme preview gruvbox # aperçu seul, sans appliquer
 omarchy-ghostty-theme next | prev     # favori suivant / précédent
 omarchy-ghostty-theme fav [add|rm <nom>]
+omarchy-ghostty-theme self-update     # dernière version (contourne le cache CDN de 5 min)
 omarchy-ghostty-theme list | current | refresh
 ```
 

@@ -12,6 +12,7 @@ hôte (macOS), comme `omarchy-theme-set` le fait sur un vrai Omarchy.
   omarchy-ghostty-theme list             liste les thèmes du catalogue
   omarchy-ghostty-theme current          thème actuellement appliqué
   omarchy-ghostty-theme refresh          re-télécharge le catalogue
+  omarchy-ghostty-theme self-update      met le script à jour (dernier commit de devbox)
 
 Catalogue : https://github.com/limehawk/omarchy-theme-website (thèmes
 intégrés + communauté). Pour chaque thème, on récupère son colors.toml —
@@ -53,6 +54,9 @@ CURRENT_FILE = STATE_DIR / "current"
 FAV_FILE = STATE_DIR / "favorites"                    # un slug par ligne, dans l'ordre d'ajout
 CATALOG_FILE = CACHE_DIR / "themes-data.json"
 COLORS_CACHE = CACHE_DIR / "colors"                   # couleurs brutes par thème (slug.json)
+
+SELF_REPO = "jgsqware/devbox"
+SELF_PATH = "macos/omarchy-ghostty-theme"
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -508,6 +512,35 @@ def cmd_pick(themes, reload=True):
         cmd_set(themes, r.stdout.strip().split("\t")[1], reload)
 
 
+def cmd_self_update():
+    """Télécharge le script PAR COMMIT : l'URL raw …/main/… est servie depuis
+    un cache CDN de 5 min (cache-control: max-age=300), donc juste après un
+    push elle rend encore l'ancienne version. L'API donne le sha à jour."""
+    r = subprocess.run(["curl", "-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github.sha",
+                        f"https://api.github.com/repos/{SELF_REPO}/commits/main"],
+                       capture_output=True, text=True)
+    sha = r.stdout.strip()
+    if r.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        die("impossible de lire le dernier commit sur l'API GitHub (réseau ou quota)")
+    new = fetch(f"https://raw.githubusercontent.com/{SELF_REPO}/{sha}/{SELF_PATH}")
+    if not new or not new.startswith("#!/usr/bin/env python3"):
+        die(f"téléchargement du script échoué ({sha[:7]})")
+    try:
+        compile(new, SELF_PATH, "exec")
+    except SyntaxError as e:
+        die(f"version {sha[:7]} invalide, rien n'est remplacé : {e}")
+
+    target = Path(os.path.realpath(sys.argv[0]))
+    if target.read_text() == new:
+        print(f"déjà à jour ({sha[:7]})")
+        return
+    tmp = target.with_name(f".{target.name}.{os.getpid()}")
+    tmp.write_text(new)
+    tmp.chmod(target.stat().st_mode)
+    tmp.replace(target)                         # atomique : jamais de script à moitié écrit
+    print(f"✅ mis à jour → {sha[:7]} ({target})")
+
+
 def main(argv):
     args = [a for a in argv if a != "--no-reload"]
     reload = "--no-reload" not in argv
@@ -530,6 +563,8 @@ def main(argv):
         if len(args) < 2:
             die("usage : omarchy-ghostty-theme set <nom>")
         cmd_set(load_catalog(), " ".join(args[1:]), reload)
+    elif cmd == "self-update":
+        cmd_self_update()
     elif cmd == "fav":
         cmd_fav(load_catalog(), args[1:])
     elif cmd in ("next", "prev"):
