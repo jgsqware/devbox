@@ -5,6 +5,10 @@ hôte (macOS), comme `omarchy-theme-set` le fait sur un vrai Omarchy.
   omarchy-ghostty-theme                  choix interactif (fzf + aperçu en couleurs)
   omarchy-ghostty-theme set <nom>        applique un thème (nom ou slug, insensible à la casse)
   omarchy-ghostty-theme preview <nom>    aperçu du thème dans le terminal, sans l'appliquer
+  omarchy-ghostty-theme next | prev      thème favori suivant / précédent
+  omarchy-ghostty-theme fav [add|rm <nom>]  liste / ajoute / retire un favori
+                                         (dans le sélecteur : ESPACE bascule le favori,
+                                          ctrl-f n'affiche que les favoris, ctrl-a tout)
   omarchy-ghostty-theme list             liste les thèmes du catalogue
   omarchy-ghostty-theme current          thème actuellement appliqué
   omarchy-ghostty-theme refresh          re-télécharge le catalogue
@@ -46,6 +50,7 @@ STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state") / "o
 CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "omarchy-ghostty"
 THEME_CONF = STATE_DIR / "ghostty.conf"
 CURRENT_FILE = STATE_DIR / "current"
+FAV_FILE = STATE_DIR / "favorites"                    # un slug par ligne, dans l'ordre d'ajout
 CATALOG_FILE = CACHE_DIR / "themes-data.json"
 COLORS_CACHE = CACHE_DIR / "colors"                   # couleurs brutes par thème (slug.json)
 
@@ -421,21 +426,86 @@ def cmd_set(themes, query, reload=True):
             print("   Ghostty ne tourne pas — appliqué au prochain lancement")
 
 
-def cmd_pick(themes):
+# ------------------------------------------------------------- favoris ---
+def load_favs():
+    return [l.strip() for l in FAV_FILE.read_text().splitlines() if l.strip()] if FAV_FILE.exists() else []
+
+
+def save_favs(favs):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    FAV_FILE.write_text("".join(f"{f}\n" for f in favs))
+
+
+def toggle_fav(slug):
+    favs = load_favs()
+    if slug in favs:
+        favs.remove(slug)
+    else:
+        favs.append(slug)
+    save_favs(favs)
+    return slug in favs
+
+
+def picker_lines(themes, only_favs=False):
+    """Ordre alphabétique STABLE (les favoris ne remontent pas) : après un
+    ESPACE, fzf recharge la liste et le curseur reste sur la même ligne."""
+    favs = set(load_favs())
+    return "\n".join(f"{'★' if t['slug'] in favs else ' '} {t['name']}\t{t['slug']}"
+                     for t in themes if not only_favs or t["slug"] in favs)
+
+
+def cmd_fav(themes, args):
+    if not args:
+        by_slug = {t["slug"]: t for t in themes}
+        favs = load_favs()
+        if not favs:
+            print("aucun favori — ESPACE dans le sélecteur, ou : omarchy-ghostty-theme fav add <nom>")
+        for f in favs:
+            print(f"★ {f:30} {by_slug[f]['name'] if f in by_slug else '(absent du catalogue)'}")
+        return
+    action, query = args[0], " ".join(args[1:])
+    if action == "toggle":                      # appelé par fzf avec le slug exact
+        toggle_fav(query)
+        return
+    if action not in ("add", "rm") or not query:
+        die("usage : omarchy-ghostty-theme fav [add|rm <nom>]")
+    theme = find_theme(themes, query)
+    favs = load_favs()
+    if action == "add" and theme["slug"] not in favs:
+        favs.append(theme["slug"])
+    elif action == "rm" and theme["slug"] in favs:
+        favs.remove(theme["slug"])
+    save_favs(favs)
+    print(f"{'★ ajouté' if action == 'add' else 'retiré'} : {theme['name']}")
+
+
+def cmd_cycle(themes, step, reload=True):
+    favs = [f for f in load_favs() if any(t["slug"] == f for t in themes)]
+    if not favs:
+        die("aucun favori — ESPACE dans le sélecteur, ou : omarchy-ghostty-theme fav add <nom>")
+    current = CURRENT_FILE.read_text().split("\t")[0] if CURRENT_FILE.exists() else None
+    i = favs.index(current) + step if current in favs else (0 if step > 0 else -1)
+    cmd_set(themes, favs[i % len(favs)], reload)
+
+
+def cmd_pick(themes, reload=True):
     if not shutil.which("fzf"):
         for t in themes:
             print(f"{t['slug']:32} {t['name']}")
         print("\nfzf absent (brew install fzf) — puis : omarchy-ghostty-theme set <slug>")
         return
     prefetch(themes)
-    lines = "\n".join(f"{t['name']}\t{t['slug']}" for t in themes)
     me = shlex.quote(os.path.realpath(sys.argv[0]))
     r = subprocess.run(["fzf", "--delimiter=\t", "--with-nth=1", "--prompt=thème> ",
                         "--height=90%", "--reverse", "--ansi",
+                        "--header=espace ★ favori · ctrl-f favoris · ctrl-a tout · entrée appliquer",
+                        f"--bind=space:execute-silent({me} fav toggle {{2}})+reload-sync({me} _lines)",
+                        f"--bind=ctrl-f:reload-sync({me} _lines --favs)+first",
+                        f"--bind=ctrl-a:reload-sync({me} _lines)+first",
                         f"--preview={me} preview {{2}}", "--preview-window=right,65%,border-left"],
-                       input=lines, stdout=subprocess.PIPE, text=True)
+                       input=picker_lines(themes), stdout=subprocess.PIPE, text=True)
     if r.returncode == 0 and r.stdout.strip():
-        cmd_set(themes, r.stdout.strip().split("\t")[1])
+        cmd_set(themes, r.stdout.strip().split("\t")[1], reload)
 
 
 def main(argv):
@@ -460,8 +530,14 @@ def main(argv):
         if len(args) < 2:
             die("usage : omarchy-ghostty-theme set <nom>")
         cmd_set(load_catalog(), " ".join(args[1:]), reload)
+    elif cmd == "fav":
+        cmd_fav(load_catalog(), args[1:])
+    elif cmd in ("next", "prev"):
+        cmd_cycle(load_catalog(), 1 if cmd == "next" else -1, reload)
+    elif cmd == "_lines":                       # interne : liste rechargée par fzf
+        print(picker_lines(load_catalog(), only_favs="--favs" in args))
     elif cmd == "pick":
-        cmd_pick(load_catalog())
+        cmd_pick(load_catalog(), reload)
     else:
         cmd_set(load_catalog(), " ".join(args), reload)   # raccourci : omarchy-ghostty-theme <nom>
 

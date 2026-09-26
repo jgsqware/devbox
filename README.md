@@ -96,6 +96,8 @@ curl -fsSL https://raw.githubusercontent.com/jgsqware/devbox/main/macos/omarchy-
 omarchy-ghostty-theme                 # choix interactif (fzf + aperçu en couleurs)
 omarchy-ghostty-theme set "tokyo night"
 omarchy-ghostty-theme preview gruvbox # aperçu seul, sans appliquer
+omarchy-ghostty-theme next | prev     # favori suivant / précédent
+omarchy-ghostty-theme fav [add|rm <nom>]
 omarchy-ghostty-theme list | current | refresh
 ```
 
@@ -112,6 +114,10 @@ omarchy-ghostty-theme list | current | refresh
   shell/code, sélection, curseur). Les couleurs de tous les thèmes sont
   préchargées en arrière-plan à l'ouverture (~12 s pour tout le catalogue),
   puis mises en cache 24 h ; `refresh` vide le cache.
+- **Favoris** : dans le sélecteur, `espace` marque/démarque le thème (★),
+  `ctrl-f` n'affiche que les favoris, `ctrl-a` revient à tout. Ensuite
+  `next` / `prev` fait défiler les favoris sans ouvrir le sélecteur (à lier
+  à un raccourci). Stockés dans `~/.local/state/omarchy-ghostty/favorites`.
 - Recharge Ghostty par `SIGUSR2` ; si rien ne change, `Cmd+Shift+,`.
 
 ## D'où vient le prompt
