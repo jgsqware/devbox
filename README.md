@@ -75,6 +75,8 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `overlay/bash/rc.d/*.sh` | **les réglages shell** — déposés dans `~/.config/devbox/rc.d/` |
 | `overlay/omarchy/themed/*.tpl` | cibles de thème supplémentaires (zellij) |
 | `overlay/terminfo/xterm-ghostty.terminfo` | entrée terminfo Ghostty, compilée par `tic` à l'étape ⑦ |
+| `sync-fleet.sh` | rejoue le bootstrap sur toutes les machines `tag:omarchy` de la tailnet (`mise run sync`) |
+| `hooks/post-commit` | après un commit sur `main` : push + `sync-fleet.sh` en arrière-plan (`mise run hooks` pour l'activer) |
 
 ## D'où vient le prompt
 
@@ -180,6 +182,21 @@ intact.
   `sshd` hérité d'un provisioning antérieur est désactivé (le service
   uniquement) une fois Tailscale SSH confirmé actif — le paquet `openssh`
   reste installé, il fournit aussi le CLIENT `ssh` (git en ssh, etc.).
+- 📡 **mosh** : `mosh-server` est installé partout et démarré à la demande
+  par Tailscale SSH (aucun démon). Si ufw est actif, l'étape `tailscale`
+  ouvre UDP 60000-61000 **sur `tailscale0` uniquement**. Côté client,
+  `s <hôte> [cmd]` (`overlay/bash/rc.d/30-remote.sh`) prend mosh si mosh est
+  installé en local ET `mosh-server` présent sur l'hôte (sondé une fois par
+  shell), sinon ssh. `DEVBOX_REMOTE=ssh` force ssh. Sur un vrai Omarchy,
+  l'étape `shell` est sautée : `s` n'y est pas déployé.
+- 🔁 **Sync de la flotte** : `hooks/post-commit` (activé par `mise run hooks`
+  = `git config core.hooksPath hooks`) pousse chaque commit sur `main`, puis
+  lance `sync-fleet.sh` en arrière-plan : `tailscale ssh` vers chaque machine
+  `tag:omarchy` en ligne → `git pull --ff-only && ./bootstrap.sh --skip cli-auth`,
+  en parallèle. Non interactif : il faut `sudo` sans mot de passe sur l'hôte
+  (`--sudo-nopasswd`), sinon échec signalé ; un hôte sans `~/devbox` est
+  ignoré. Logs dans `~/.local/state/devbox/sync/latest/`, résumé en
+  `notify-send`. `DEVBOX_NO_SYNC=1 git commit …` pour ne pas synchroniser.
 - 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et
   `claude auth login --claudeai --email $CLAUDE_EMAIL`, interactifs, à chaque
   provisioning — sautés si déjà authentifié (`gh auth status` /

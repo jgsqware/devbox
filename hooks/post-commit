@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# devbox — après chaque commit sur main : push, puis resync de la flotte
+# tag:omarchy EN ARRIÈRE-PLAN (le commit rend la main tout de suite).
+#
+# Activé par : git config core.hooksPath hooks   (mise run hooks)
+# Désactiver ponctuellement : DEVBOX_NO_SYNC=1 git commit …
+
+[[ "${DEVBOX_NO_SYNC:-}" == 1 ]] && exit 0
+[[ "$(git symbolic-ref --short HEAD 2>/dev/null)" == main ]] || exit 0
+
+root="$(git rev-parse --show-toplevel)"
+
+if ! git push --quiet origin main; then
+  echo "devbox: push échoué — flotte NON resynchronisée" >&2
+  exit 0
+fi
+echo "devbox: poussé — sync de la flotte en arrière-plan (logs : ~/.local/state/devbox/sync/latest/)"
+
+nohup "$root/sync-fleet.sh" >/dev/null 2>&1 </dev/null &
+disown

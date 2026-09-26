@@ -5,6 +5,8 @@
 #   mise run bootstrap -- --only ssh      idem, une seule étape
 #   mise run pull                         juste la mise à jour, sans lancer bootstrap
 #   mise run bootstrap-only -- -n         lance bootstrap.sh sans pull (offline/debug)
+#   mise run sync                         bootstrap sur toutes les machines tag:omarchy
+#   mise run hooks                        active le hook post-commit (push + sync auto)
 
 [tasks.pull]
 description = "git pull --ff-only"
@@ -18,3 +20,11 @@ run = "./bootstrap.sh"
 description = "git pull puis ./bootstrap.sh"
 depends = ["pull"]
 run = "./bootstrap.sh"
+
+[tasks.sync]
+description = "rejoue le bootstrap sur toutes les machines tag:omarchy"
+run = "./sync-fleet.sh"
+
+[tasks.hooks]
+description = "active le hook post-commit (push + sync de la flotte)"
+run = "git config core.hooksPath hooks"

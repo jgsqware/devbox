@@ -1084,6 +1084,19 @@ cleanup_sshd() {
   fi
 }
 
+# mosh : la poignée de main passe par Tailscale SSH (qui lance mosh-server),
+# puis la session vit en UDP 60000-61000. ufw actif (vrai Omarchy : deny
+# incoming par défaut) bloquerait ces paquets — Tailscale SSH, lui, est
+# intercepté par tailscaled et ne passe pas par INPUT. On n'ouvre que sur
+# tailscale0 : jamais exposé hors tailnet, l'ACL reste le vrai pare-feu.
+open_mosh_ufw() {
+  has mosh-server && has ufw || return 0
+  asroot ufw status 2>/dev/null | grep -q '^Status: active' || return 0
+  asroot ufw allow in on tailscale0 to any port 60000:61000 proto udp comment 'mosh via tailnet' >/dev/null \
+    && ok "ufw : mosh (UDP 60000-61000) ouvert sur tailscale0" \
+    || warn "ufw : règle mosh non posée — mosh retombera sur ssh"
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   has tailscale || die "tailscale non installé (étape ③)."
@@ -1117,6 +1130,7 @@ do_tailscale() {
   ok "opérateur $DEVBOX_USER + Tailscale SSH actifs (tag:omarchy)"
 
   cleanup_sshd
+  open_mosh_ufw
 }
 
 # ============================================================ ⑩ cli-auth =====
@@ -1244,6 +1258,7 @@ do_verify() {
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
+  check "mosh-server présent"     "command -v mosh-server >/dev/null 2>&1 && mosh-server --version 2>&1 | head -1"
   check "yay présent"             "command -v yay >/dev/null 2>&1 && yay --version 2>&1 | head -1"
   # worktrunk-bin installe le binaire `wt`, pas `worktrunk` — via pacman
   # (AUR/yay) OU via install_worktrunk_fallback (~/.local/bin/wt, GitHub direct)
