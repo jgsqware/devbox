@@ -688,7 +688,19 @@ do_packages() {
     asroot systemctl enable --now docker.socket || warn "docker.socket non activé"
     if ! id -nG "$(id -un)" | tr ' ' '\n' | grep -qx docker; then
       asroot usermod -aG docker "$(id -un)"
-      info "groupe docker ajouté — effectif à la prochaine session"
+      info "groupe docker ajouté"
+    fi
+    # Les groupes d'un processus sont figés à la connexion : membre dans
+    # /etc/group ne suffit pas tant que la session (graphique, souvent
+    # ouverte depuis des jours) n'a pas été rouverte. ACL sur le socket en
+    # attendant — `docker ps` marche tout de suite ; elle disparaît avec le
+    # socket (reboot, redémarrage docker), et le groupe prend alors le relais.
+    if ! id -nG | tr ' ' '\n' | grep -qx docker && [[ -S /var/run/docker.sock ]]; then
+      if has setfacl && asroot setfacl -m "u:$(id -un):rw" /var/run/docker.sock; then
+        info "session sans le groupe docker — ACL posée sur le socket (docker utilisable sans sudo dès maintenant)"
+      else
+        warn "groupe docker effectif seulement après déconnexion/reconnexion (ou : newgrp docker)"
+      fi
     fi
   fi
 
@@ -1274,6 +1286,7 @@ do_verify() {
   # session courante garde ses groupes en cache jusqu'à la prochaine
   # connexion — id -nG donnerait un faux ❌ juste après le run qui l'ajoute.
   has docker && check "membre de docker" "getent group docker | grep -qw \"\$(id -un)\" && echo docker"
+  has docker && check "docker sans sudo"  "docker info >/dev/null 2>&1 && echo ok"
   check "sudo fonctionnel"        "sudo -n true 2>/dev/null && echo 'sans mdp' || { sudo -v && echo 'avec mdp'; }"
   is_wsl && check "systemd actif" "systemctl is-system-running | grep -qE 'running|degraded' && systemctl is-system-running"
   is_wsl && check "wsl.conf: user par défaut" "grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf && grep -E '^[[:space:]]*default' /etc/wsl.conf"
