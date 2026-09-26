@@ -58,7 +58,12 @@ elif ! sudo -n true 2>/dev/null; then
   echo "ÉCHEC: sudo demande un mot de passe — bootstrap à lancer à la main (ou --sudo-nopasswd)"
   false
 else
-  cd "$d" && git pull --ff-only && ./bootstrap.sh --skip cli-auth
+  # un seul bootstrap à la fois par machine : deux commits rapprochés lancent
+  # deux syncs, qui se marcheraient dessus (verrou pacman). Le second ATTEND
+  # (au plus 30 min) puis rejoue avec le dernier état du dépôt.
+  lock="${XDG_STATE_HOME:-$HOME/.local/state}/devbox/bootstrap.lock"
+  mkdir -p "$(dirname "$lock")"
+  cd "$d" && flock -w 1800 "$lock" sh -c "git pull --ff-only && ./bootstrap.sh --skip cli-auth"
 fi'
 
 echo "sync → ${#hosts[@]} machine(s) : ${hosts[*]}"

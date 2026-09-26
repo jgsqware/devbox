@@ -93,8 +93,9 @@ mkdir -p ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/jgsqware/devbox/main/macos/omarchy-ghostty-theme \
   -o ~/.local/bin/omarchy-ghostty-theme && chmod +x ~/.local/bin/omarchy-ghostty-theme
 
-omarchy-ghostty-theme                 # choix interactif (fzf)
+omarchy-ghostty-theme                 # choix interactif (fzf + aperçu en couleurs)
 omarchy-ghostty-theme set "tokyo night"
+omarchy-ghostty-theme preview gruvbox # aperçu seul, sans appliquer
 omarchy-ghostty-theme list | current | refresh
 ```
 
@@ -106,6 +107,11 @@ omarchy-ghostty-theme list | current | refresh
   `config-file = ?"…"` à la config Ghostty (sauvegardée en `.omarchy-bak`),
   exactement le branchement d'Omarchy. Seules des couleurs `#rrggbb` validées
   y arrivent : un thème tiers ne peut pas injecter d'autre clé (`command`…).
+- **Aperçu** à la `ghostty +list-themes` : dans le sélecteur fzf, chaque
+  thème est rendu en couleurs 24 bits (fond, palette 16 couleurs, extrait
+  shell/code, sélection, curseur). Les couleurs de tous les thèmes sont
+  préchargées en arrière-plan à l'ouverture (~12 s pour tout le catalogue),
+  puis mises en cache 24 h ; `refresh` vide le cache.
 - Recharge Ghostty par `SIGUSR2` ; si rien ne change, `Cmd+Shift+,`.
 
 ## D'où vient le prompt
@@ -227,7 +233,8 @@ intact.
   (`DEVBOX_SYNC_SELF=0` pour l'exclure) → `git pull --ff-only && ./bootstrap.sh --skip cli-auth`,
   en parallèle. Non interactif : il faut `sudo` sans mot de passe sur l'hôte
   (`--sudo-nopasswd`), sinon échec signalé ; un hôte sans `~/devbox` est
-  ignoré ; `DEVBOX_SYNC_EXCLUDE` (défaut `obsidian-mcp`) retire des machines
+  ignoré ; un seul bootstrap à la fois par machine (`flock` : deux commits
+  rapprochés → le second sync attend le premier) ; `DEVBOX_SYNC_EXCLUDE` (défaut `obsidian-mcp`) retire des machines
   taguées qui ne sont pas des devbox. Logs dans `~/.local/state/devbox/sync/latest/`, résumé en
   `notify-send`. `DEVBOX_NO_SYNC=1 git commit …` pour ne pas synchroniser.
 - 🔑 **Auth CLI par défaut** (étape `cli-auth`) : `gh auth login` et

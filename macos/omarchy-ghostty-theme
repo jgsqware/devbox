@@ -2,8 +2,9 @@
 """omarchy-ghostty-theme — applique un thème Omarchy à Ghostty sur le poste
 hôte (macOS), comme `omarchy-theme-set` le fait sur un vrai Omarchy.
 
-  omarchy-ghostty-theme                  choix interactif (fzf si présent)
+  omarchy-ghostty-theme                  choix interactif (fzf + aperçu en couleurs)
   omarchy-ghostty-theme set <nom>        applique un thème (nom ou slug, insensible à la casse)
+  omarchy-ghostty-theme preview <nom>    aperçu du thème dans le terminal, sans l'appliquer
   omarchy-ghostty-theme list             liste les thèmes du catalogue
   omarchy-ghostty-theme current          thème actuellement appliqué
   omarchy-ghostty-theme refresh          re-télécharge le catalogue
@@ -30,7 +31,9 @@ import re
 import shutil
 import signal
 import subprocess
+import shlex
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -44,6 +47,7 @@ CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "omarchy
 THEME_CONF = STATE_DIR / "ghostty.conf"
 CURRENT_FILE = STATE_DIR / "current"
 CATALOG_FILE = CACHE_DIR / "themes-data.json"
+COLORS_CACHE = CACHE_DIR / "colors"                   # couleurs brutes par thème (slug.json)
 
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -269,21 +273,137 @@ def reload_ghostty():
 
 
 # ------------------------------------------------------------- commandes ---
+def theme_colors(theme, use_cache=True):
+    """Couleurs RÉSOLUES du thème, ou None. Les couleurs brutes sont mises en
+    cache (même TTL que le catalogue) : l'aperçu fzf rappelle ceci à chaque
+    déplacement, et `set` juste après n'a plus rien à télécharger."""
+    cache = COLORS_CACHE / f"{theme['slug']}.json"
+    if use_cache and cache.exists() and time.time() - cache.stat().st_mtime < CATALOG_TTL:
+        raw = json.loads(cache.read_text())
+    else:
+        base = raw_base(theme)
+        raw = None
+        text = fetch(base + "colors.toml")
+        if text:
+            raw = parse_colors_toml(text)
+        else:
+            text = fetch(base + "alacritty.toml")
+            if text:
+                raw = colors_from_alacritty(text)
+        if not raw:
+            return None
+        COLORS_CACHE.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(f".{os.getpid()}.tmp")   # écriture atomique : aperçu et préchargement en parallèle
+        tmp.write_text(json.dumps(raw))
+        tmp.replace(cache)
+    return resolve(dict(raw))
+
+
+def prefetch(themes, workers=12):
+    """Remplit le cache des couleurs en arrière-plan pendant que fzf tourne :
+    les aperçus deviennent instantanés au fil de la navigation."""
+    todo = [t for t in themes if not (COLORS_CACHE / f"{t['slug']}.json").exists()]
+    lock = threading.Lock()
+
+    def worker():
+        while True:
+            with lock:
+                if not todo:
+                    return
+                t = todo.pop()
+            try:
+                theme_colors(t)
+            except Exception:
+                pass
+
+    for _ in range(workers):
+        threading.Thread(target=worker, daemon=True).start()
+
+
+# ---------------------------------------------------------------- aperçu ---
+# Même idée que `ghostty +list-themes` : le thème rendu dans le terminal, en
+# vraies couleurs 24 bits — fond, texte, palette 16 couleurs, sélection,
+# curseur et un extrait shell/code coloré avec la palette ANSI du thème.
+PALETTE = ["background", "red", "green", "yellow", "blue", "magenta", "cyan", "foreground",
+           "muted", "bright_red", "bright_green", "bright_yellow", "bright_blue",
+           "bright_magenta", "bright_cyan", "bright_foreground"]
+
+
+def _rgb(h):
+    return ";".join(str(int(h[i:i + 2], 16)) for i in (1, 3, 5))
+
+
+def preview_text(theme, c, width):
+    bg, fg = c["background"], c["foreground"]
+    reset = "\x1b[0m"
+
+    def seg(text, color=None, bold=False, back=None):
+        return (f"\x1b[48;2;{_rgb(back or bg)}m\x1b[38;2;{_rgb(color or fg)}m"
+                + ("\x1b[1m" if bold else "") + text + "\x1b[22m")
+
+    def line(*segs):
+        visible = sum(len(re.sub(r"\x1b\[[0-9;]*m", "", x)) for x in segs)
+        return "".join(segs) + seg(" " * max(0, width - visible)) + reset
+
+    def swatches(start):
+        # 8 cases qui tiennent dans la largeur de l'aperçu ; la 0 EST le fond :
+        # numéro en `muted` et case soulignée pour qu'elle reste repérable.
+        block = max(2, (width - 1) // 8 - 3)
+        cells = []
+        for i in range(start, start + 8):
+            color = c[PALETTE[i]]
+            label = c["muted"] if color == bg else color
+            fill = ("▁" * block) if color == bg else " " * block
+            cells.append(seg(f" {i:>2}", label) + seg(fill, label, back=color))
+        return line(seg(" "), *cells)
+
+    mode = "clair" if c.get("mode") == "light" or sum(int(bg[i:i + 2], 16) for i in (1, 3, 5)) > 382 else "sombre"
+    rows = [
+        line(),
+        line(seg(f" {theme['name']}", c["blue"], bold=True), seg(f"  · {mode} · {theme['colors_source']}", c["muted"])),
+        line(),
+        swatches(0),
+        swatches(8),
+        line(),
+        line(seg(" ❯ ", c["green"], bold=True), seg("ls -la "), seg("~/projets", c["cyan"])),
+        line(seg(" drwxr-xr-x ", c["muted"]), seg("src/", c["bright_blue"], bold=True),
+             seg("   -rw-r--r-- ", c["muted"]), seg("README.md")),
+        line(seg(" ❯ ", c["green"], bold=True), seg("git status")),
+        line(seg(" modified:   ", c["red"]), seg("app.py", c["red"]), seg("   new file: ", c["green"]),
+             seg("theme.py", c["green"])),
+        line(),
+        line(seg(" def ", c["magenta"]), seg("greet", c["blue"]), seg("(name: "), seg("str", c["yellow"]), seg(") -> "),
+             seg("str", c["yellow"]), seg(":")),
+        line(seg("     "), seg("# salue quelqu'un", c["muted"])),
+        line(seg("     "), seg("return ", c["magenta"]), seg('f"Bonjour, ', c["green"]), seg("{name}", c["cyan"]),
+             seg('!"', c["green"])),
+        line(seg(" count "), seg("= "), seg("42", c["bright_yellow"]),
+             seg("   ok ", c["bright_green"]), seg("warn ", c["bright_yellow"]), seg("err", c["bright_red"])),
+        line(),
+        line(seg(" "), seg(" texte sélectionné ", c["selection_foreground"], back=c["selection_background"]),
+             seg("  curseur "), seg(" ", back=c["bright_foreground"])),
+        line(),
+    ]
+    return "\n".join(rows)
+
+
+def cmd_preview(themes, query):
+    theme = find_theme(themes, query)
+    colors = theme_colors(theme)
+    if not colors:
+        print(f"{theme['name']} : couleurs introuvables")
+        return
+    width = int(os.environ.get("FZF_PREVIEW_COLUMNS") or shutil.get_terminal_size((80, 24)).columns)
+    print(preview_text(theme, colors, width))
+
+
 def cmd_set(themes, query, reload=True):
     theme = find_theme(themes, query)
-    base = raw_base(theme)
-    colors = None
-    text = fetch(base + "colors.toml")
-    if text:
-        colors = parse_colors_toml(text)
-    else:
-        text = fetch(base + "alacritty.toml")
-        if text:
-            colors = colors_from_alacritty(text)
+    colors = theme_colors(theme)
     if not colors:
-        die(f"{theme['name']} : ni colors.toml ni alacritty.toml exploitable sous {base}")
+        die(f"{theme['name']} : ni colors.toml ni alacritty.toml exploitable sous {raw_base(theme)}")
 
-    conf = render(resolve(colors))
+    conf = render(colors)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     THEME_CONF.write_text(f"# {theme['name']} — {theme['github_url']}\n{conf}")
     CURRENT_FILE.write_text(f"{theme['slug']}\t{theme['name']}\n")
@@ -307,10 +427,13 @@ def cmd_pick(themes):
             print(f"{t['slug']:32} {t['name']}")
         print("\nfzf absent (brew install fzf) — puis : omarchy-ghostty-theme set <slug>")
         return
+    prefetch(themes)
     lines = "\n".join(f"{t['name']}\t{t['slug']}" for t in themes)
+    me = shlex.quote(os.path.realpath(sys.argv[0]))
     r = subprocess.run(["fzf", "--delimiter=\t", "--with-nth=1", "--prompt=thème> ",
-                        "--height=40%", "--reverse"],
-                       input=lines, capture_output=True, text=True)
+                        "--height=90%", "--reverse", "--ansi",
+                        f"--preview={me} preview {{2}}", "--preview-window=right,65%,border-left"],
+                       input=lines, stdout=subprocess.PIPE, text=True)
     if r.returncode == 0 and r.stdout.strip():
         cmd_set(themes, r.stdout.strip().split("\t")[1])
 
@@ -324,7 +447,12 @@ def main(argv):
     elif cmd == "current":
         print(CURRENT_FILE.read_text().split("\t")[1].strip() if CURRENT_FILE.exists() else "aucun")
     elif cmd == "refresh":
+        shutil.rmtree(COLORS_CACHE, ignore_errors=True)
         print(f"{len(load_catalog(force=True))} thèmes au catalogue")
+    elif cmd == "preview":
+        if len(args) < 2:
+            die("usage : omarchy-ghostty-theme preview <nom>")
+        cmd_preview(load_catalog(), " ".join(args[1:]))
     elif cmd == "list":
         for t in load_catalog():
             print(f"{t['slug']:32} {t['name']}")
