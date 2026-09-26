@@ -51,7 +51,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -201,7 +201,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -216,6 +216,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
+  claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1224,6 +1225,47 @@ do_cli_auth() {
   fi
 }
 
+# ======================================================= ⑩b claude-plugins ===
+# Plugins Claude Code en scope user : actifs dans tous les projets. Non
+# interactif (contrairement à cli-auth), donc rejoué aussi par sync-fleet.
+do_claude_plugins() {
+  step "⑩b" "Plugins Claude Code (scope user)"
+  [[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"   # ssh non interactif (sync-fleet)
+  has claude || { skip "claude absent — plugins sautés"; return 0; }
+  # Format : "<plugin>@<marketplace> <source github>"
+  local p id mkt src
+  for p in "adhd@adhd UditAkhourii/adhd"; do
+    read -r id src <<<"$p"; mkt="${id#*@}"
+    if (( DRY_RUN )); then
+      info "claude plugin install $id (dry-run, non exécuté)"
+    elif claude plugin list 2>/dev/null | grep -q "❯ $id\$"; then
+      ok "plugin claude $id déjà installé"
+    else
+      claude plugin marketplace list 2>/dev/null | grep -q "❯ $mkt\$" \
+        || claude plugin marketplace add "$src" >/dev/null \
+        || { warn "marketplace $src injoignable — plugin $id sauté"; continue; }
+      claude plugin install "$id" --scope user >/dev/null \
+        && ok "plugin claude $id installé" \
+        || warn "installation du plugin $id échouée — relance à la main : claude plugin install $id --scope user"
+    fi
+  done
+
+  # Consignes globales (~/.claude/CLAUDE.md) : bloc géré entre marqueurs,
+  # remplacé à chaque passage ; le reste du fichier n'est jamais touché.
+  local md="$HOME/.claude/CLAUDE.md" src_md="$OVERLAY_DIR/claude/CLAUDE.md"
+  local begin="<!-- devbox:begin (géré par bootstrap.sh, ne pas éditer) -->" end="<!-- devbox:end -->"
+  if (( DRY_RUN )); then
+    info "bloc devbox dans $md (dry-run, non écrit)"
+  else
+    mkdir -p "${md%/*}"; touch "$md"
+    local rest; rest="$(awk -v b="$begin" -v e="$end" '$0==b{skip=1;next} $0==e{skip=0;next} !skip' "$md")"
+    { [[ -n "${rest//[$'\n' ]/}" ]] && printf '%s\n\n' "$rest"
+      echo "$begin"; cat "$src_md"; echo "$end"; } > "$md.tmp"
+    if cmp -s "$md" "$md.tmp"; then rm -f "$md.tmp"; ok "$md déjà à jour"
+    else mv "$md.tmp" "$md"; ok "bloc devbox écrit → $md"; fi
+  fi
+}
+
 # ============================================================== ⑪ hooks =====
 # Chaque clone porte le hook post-commit : un commit sur N'IMPORTE quel nœud
 # pousse puis resynchronise toute la flotte (sync dans tous les sens). Pour
@@ -1347,6 +1389,7 @@ do_verify() {
   check "worktrunk (wt)"          "command -v wt >/dev/null 2>&1 && wt --version 2>&1 | head -1"
   has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
+  has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
   printf '\n'
@@ -1399,6 +1442,7 @@ main() {
       theme)     do_theme ;;
       tailscale) do_tailscale ;;
       cli-auth)  do_cli_auth ;;
+      claude-plugins) do_claude_plugins ;;
       hooks)     do_hooks ;;
       verify)    do_verify ;;
     esac
