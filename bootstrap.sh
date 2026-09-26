@@ -43,6 +43,14 @@ AUR_PACKAGES=(worktrunk-bin)
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 
+# ~/.local/bin n'est ajouté au PATH que par rc.d (shells interactifs) : lancé
+# en non interactif (sync-fleet, `bash -lc`), le script ne verrait pas ce
+# qu'il y installe lui-même (wt en fallback GitHub) et le signalerait absent.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
 STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth verify)
 DRY_RUN=0
 FORCE_SKEL=0
@@ -278,7 +286,10 @@ preflight() {
     fi
   else
     has sudo || die "sudo requis (ou relance ce script en root pour l'installer)."
-    sudo -v || die "sudo refusé."
+    # sudo -n d'abord : avec NOPASSWD, `sudo -v` peut QUAND MÊME exiger un mot
+    # de passe (verifypw=all : toutes les entrées de l'user doivent être
+    # NOPASSWD) — et sans terminal (sync-fleet), il n'y a personne pour le taper.
+    sudo -n true 2>/dev/null || sudo -v || die "sudo refusé."
     if [[ "$(id -un)" != "$DEVBOX_USER" ]]; then
       warn "tu es '$(id -un)', pas '$DEVBOX_USER' — l'install ira dans $HOME"
     fi
@@ -1238,7 +1249,9 @@ do_verify() {
   fi
   check "paquets manquants" "$missing_cmd"
   (( full )) && check "loader rc.d dans ~/.bashrc"  "grep -q 'devbox/rc.d' \"\$HOME/.bashrc\" && ls \"$RC_D\" | tr '\n' ' '"
-  check "starship actif dans bash"  "bash -ic 'echo \"\${STARSHIP_SHELL:-KO}\"' 2>/dev/null | tail -1 | grep -qv KO && echo bash"
+  # TERM forcé : sans terminal (sync-fleet), TERM est vide/dumb et l'init
+  # omarchy saute starship — faux négatif, pas un vrai défaut de config.
+  check "starship actif dans bash"  "TERM=xterm-256color bash -ic 'echo \"\${STARSHIP_SHELL:-KO}\"' 2>/dev/null | tail -1 | grep -qv KO && echo bash"
   check "prompt starship configuré" "test -r \"\$HOME/.config/starship.toml\" && head -1 \"\$HOME/.config/starship.toml\""
   check "hostname coloré dans le prompt" "grep -A3 '^\[hostname\]' \"\$HOME/.config/starship.toml\" 2>/dev/null | grep -o 'bold #[0-9a-fA-F]*' | head -1"
   (( full )) && check "locale utilisable"       "LC_ALL=${LOCALES%% *} locale >/dev/null 2>&1 && echo '${LOCALES%% *}'"

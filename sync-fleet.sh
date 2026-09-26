@@ -36,13 +36,18 @@ fi
 mkdir -p "$LOG_DIR"
 ln -sfn "$LOG_DIR" "$(dirname "$LOG_DIR")/latest"
 
-remote='set -e
-d="$HOME/devbox"
-[ -d "$d/.git" ] || { echo "SKIP: pas de ~/devbox sur cet hôte"; exit 0; }
-sudo -n true 2>/dev/null || { echo "ÉCHEC: sudo demande un mot de passe — bootstrap à lancer à la main (ou --sudo-nopasswd)"; exit 3; }
-cd "$d"
-git pull --ff-only
-./bootstrap.sh --skip cli-auth'
+# Ni `set -e` ni `exit` : dans un shell de login, `exit` fait lire
+# ~/.bash_logout, et sous set -e son moindre échec (clear_console absent sur
+# Ubuntu) écrase le code de sortie — un SKIP ressortait alors en échec.
+remote='d="$HOME/devbox"
+if [ ! -d "$d/.git" ]; then
+  echo "SKIP: pas de ~/devbox sur cet hôte"
+elif ! sudo -n true 2>/dev/null; then
+  echo "ÉCHEC: sudo demande un mot de passe — bootstrap à lancer à la main (ou --sudo-nopasswd)"
+  false
+else
+  cd "$d" && git pull --ff-only && ./bootstrap.sh --skip cli-auth
+fi'
 
 echo "sync → ${#hosts[@]} machine(s) : ${hosts[*]}"
 echo "logs : $LOG_DIR"
