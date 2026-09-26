@@ -76,8 +76,37 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `overlay/omarchy/themed/*.tpl` | cibles de thème supplémentaires (zellij) |
 | `overlay/terminfo/xterm-ghostty.terminfo` | entrée terminfo Ghostty, compilée par `tic` à l'étape ⑦ |
 | `sync-fleet.sh` | rejoue le bootstrap sur toutes les machines `tag:omarchy` de la tailnet (`mise run sync`) |
+| `macos/omarchy-ghostty-theme` | thèmes Omarchy pour Ghostty **sur le poste hôte macOS** (voir plus bas) |
 | `TODO.md` | tâches en attente sur la flotte |
 | `hooks/post-commit` | après un commit sur `main` : push + `sync-fleet.sh` en arrière-plan (`mise run hooks` pour l'activer) |
+
+## Thèmes Omarchy dans Ghostty sur macOS
+
+`macos/omarchy-ghostty-theme` fait pour Ghostty sur le Mac ce que
+`omarchy-theme-set` fait sur un vrai Omarchy, avec les ~350 thèmes du
+[catalogue limehawk](https://github.com/limehawk/omarchy-theme-website)
+(intégrés + communauté). Python 3 + curl, rien d'autre (fournis par les
+Command Line Tools) ; `fzf` optionnel pour le choix interactif.
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/jgsqware/devbox/main/macos/omarchy-ghostty-theme \
+  -o ~/.local/bin/omarchy-ghostty-theme && chmod +x ~/.local/bin/omarchy-ghostty-theme
+
+omarchy-ghostty-theme                 # choix interactif (fzf)
+omarchy-ghostty-theme set "tokyo night"
+omarchy-ghostty-theme list | current | refresh
+```
+
+- Récupère le `colors.toml` du thème — ou convertit son `alacritty.toml`
+  pour les thèmes plus anciens, comme `omarchy-theme-colors-from-alacritty` —
+  et le rend avec le template `ghostty.conf.tpl` d'Omarchy : rendu identique
+  à celui d'un vrai Omarchy (vérifié sur Tokyo Night et 5 thèmes alacritty).
+- Écrit `~/.local/state/omarchy-ghostty/ghostty.conf` et ajoute **une fois**
+  `config-file = ?"…"` à la config Ghostty (sauvegardée en `.omarchy-bak`),
+  exactement le branchement d'Omarchy. Seules des couleurs `#rrggbb` validées
+  y arrivent : un thème tiers ne peut pas injecter d'autre clé (`command`…).
+- Recharge Ghostty par `SIGUSR2` ; si rien ne change, `Cmd+Shift+,`.
 
 ## D'où vient le prompt
 

@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""omarchy-ghostty-theme — applique un thème Omarchy à Ghostty sur le poste
+hôte (macOS), comme `omarchy-theme-set` le fait sur un vrai Omarchy.
+
+  omarchy-ghostty-theme                  choix interactif (fzf si présent)
+  omarchy-ghostty-theme set <nom>        applique un thème (nom ou slug, insensible à la casse)
+  omarchy-ghostty-theme list             liste les thèmes du catalogue
+  omarchy-ghostty-theme current          thème actuellement appliqué
+  omarchy-ghostty-theme refresh          re-télécharge le catalogue
+
+Catalogue : https://github.com/limehawk/omarchy-theme-website (thèmes
+intégrés + communauté). Pour chaque thème, on récupère son colors.toml —
+ou, pour les thèmes plus anciens, son alacritty.toml converti comme le fait
+omarchy-theme-colors-from-alacritty — puis on le rend avec le MÊME template
+que Omarchy (default/themed/ghostty.conf.tpl).
+
+Seules des couleurs #rrggbb validées atteignent la config Ghostty : un thème
+tiers ne peut pas y glisser d'autres clés (command =, etc.) — même raison
+qu'omarchy-theme-set refuse le ghostty.conf d'un thème installé.
+
+Branchement dans Ghostty, comme sur Omarchy : une ligne
+  config-file = ?"<état>/ghostty.conf"
+ajoutée une fois à la config Ghostty, puis rechargement via SIGUSR2.
+Pur stdlib python3 + curl (fournis avec les Command Line Tools de macOS).
+"""
+
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CATALOG_URL = ("https://raw.githubusercontent.com/limehawk/omarchy-theme-website/"
+               "main/src/data/themes-data.json")
+CATALOG_TTL = 24 * 3600
+
+HOME = Path.home()
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state") / "omarchy-ghostty"
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "omarchy-ghostty"
+THEME_CONF = STATE_DIR / "ghostty.conf"
+CURRENT_FILE = STATE_DIR / "current"
+CATALOG_FILE = CACHE_DIR / "themes-data.json"
+
+HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# Omarchy default/themed/ghostty.conf.tpl, à l'identique
+GHOSTTY_TPL = """\
+background = {{ background }}
+foreground = {{ foreground }}
+cursor-color = {{ bright_foreground }}
+selection-background = {{ selection_background }}
+selection-foreground = {{ selection_foreground }}
+
+palette = 0={{ background }}
+palette = 1={{ red }}
+palette = 2={{ green }}
+palette = 3={{ yellow }}
+palette = 4={{ blue }}
+palette = 5={{ magenta }}
+palette = 6={{ cyan }}
+palette = 7={{ foreground }}
+palette = 8={{ muted }}
+palette = 9={{ bright_red }}
+palette = 10={{ bright_green }}
+palette = 11={{ bright_yellow }}
+palette = 12={{ bright_blue }}
+palette = 13={{ bright_magenta }}
+palette = 14={{ bright_cyan }}
+palette = 15={{ bright_foreground }}
+"""
+
+
+def die(msg):
+    print(f"omarchy-ghostty-theme: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def fetch(url):
+    """Contenu texte de l'URL, ou None si 404/erreur. curl plutôt qu'urllib :
+    il utilise le trousseau système de macOS, pas besoin de certifi."""
+    r = subprocess.run(["curl", "-fsSL", "--max-time", "20", url],
+                       capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+# ------------------------------------------------------------- catalogue ---
+def load_catalog(force=False):
+    fresh = CATALOG_FILE.exists() and time.time() - CATALOG_FILE.stat().st_mtime < CATALOG_TTL
+    if force or not fresh:
+        data = fetch(CATALOG_URL)
+        if data:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            CATALOG_FILE.write_text(data)
+        elif not CATALOG_FILE.exists():
+            die(f"catalogue injoignable : {CATALOG_URL}")
+    themes = json.loads(CATALOG_FILE.read_text())
+    return sorted((t for t in themes if t.get("colors_source") in ("colors.toml", "alacritty.toml")),
+                  key=lambda t: t["name"].lower())
+
+
+def find_theme(themes, query):
+    q = query.strip().lower()
+    for key in ("slug", "name"):
+        exact = [t for t in themes if t[key].lower() == q]
+        if exact:
+            return exact[0]
+    partial = [t for t in themes if q in t["slug"].lower() or q in t["name"].lower()]
+    if len(partial) == 1:
+        return partial[0]
+    if not partial:
+        die(f"aucun thème ne correspond à « {query} » — voir : omarchy-ghostty-theme list")
+    names = "\n  ".join(f"{t['name']}  ({t['slug']})" for t in partial[:20])
+    die(f"« {query} » est ambigu :\n  {names}")
+
+
+def raw_base(theme):
+    """URL raw.githubusercontent.com du dossier du thème (dépôt entier, ou
+    sous-dossier pour les thèmes intégrés : .../omarchy/tree/<branche>/themes/x)."""
+    branch = theme["default_branch"]
+    owner, repo = theme["github_owner"], theme["github_repo"]
+    canon = theme.get("canonical_github_url") or ""
+    m = re.match(r"https://github\.com/([^/]+)/([^/]+?)/?$", canon)
+    if m:
+        owner, repo = m.group(1), m.group(2)
+    path = ""
+    marker = f"/tree/{branch}/"
+    if marker in theme["github_url"]:
+        path = theme["github_url"].split(marker, 1)[1].strip("/") + "/"
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
+
+
+# ------------------------------------------------------ couleurs Omarchy ---
+def parse_colors_toml(text):
+    """Même lecture qu'omarchy-theme-color : clé = valeur, guillemets ôtés."""
+    colors = {}
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = re.sub(r"[\"' ]", "", key)
+        if not key or key.startswith("#") or key.startswith("["):
+            continue
+        m = re.search(r"[\"']([^\"']*)[\"']", value)
+        value = m.group(1) if m else value.split("#", 1)[0].strip()
+        colors[key] = value.strip()
+    return colors
+
+
+def colors_from_alacritty(text):
+    """Portage d'omarchy-theme-colors-from-alacritty : palette normal/bright,
+    primary, selection → colors.toml « legacy » (color0..15)."""
+    found, section = {}, ""
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            m = re.match(r"^\[([^\]]*)\]\s*$", s)
+            section = m.group(1).strip() if m else ""
+            continue
+        if not section or "=" not in s or s.startswith("#"):
+            continue
+        key, value = (p.strip() for p in s.split("=", 1))
+        m = re.match(r"^[\"']?(?:0[xX]|#)?([0-9a-fA-F]{6})[\"']?(\s*#.*)?$", value)
+        if not m:
+            continue
+        found.setdefault(f"{section}.{key}", "#" + m.group(1).lower())
+
+    names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+    normal = [found.get(f"colors.normal.{n}") for n in names]
+    if not all(normal):
+        return None
+    bright = [found.get(f"colors.bright.{n}") or normal[i] for i, n in enumerate(names)]
+    bg = found.get("colors.primary.background") or normal[0]
+    fg = found.get("colors.primary.foreground") or normal[7]
+    out = {f"color{i}": c for i, c in enumerate(normal + bright)}
+    out.update(color0=bg, color7=fg, background=bg, foreground=fg,
+               selection=found.get("colors.selection.background") or fg, accent=normal[4])
+    return out
+
+
+def mix(start, end, amount):
+    a = [int(start[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(end[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{int(x * (1 - amount) + y * amount + 0.5):02x}" for x, y in zip(a, b))
+
+
+def resolve(c):
+    """Sous-ensemble de resolve_theme_colors (omarchy-theme-color) : tout ce
+    que le template ghostty consomme, avec les mêmes alias et replis."""
+    def alias(key, fallback):
+        if not c.get(key):
+            c[key] = c.get(fallback, "")
+
+    for key, short in (("background", "bg"), ("foreground", "fg"), ("dark_foreground", "dark_fg"),
+                       ("bright_foreground", "bright_fg")):
+        alias(key, short)
+    alias("background", "color0")
+    alias("foreground", "color7")
+    for i, name in enumerate(["red", "green", "yellow", "blue", "magenta", "cyan"], start=1):
+        alias(name, f"color{i}")
+        alias(f"bright_{name}", f"color{i + 8}")
+    alias("magenta", "purple")
+    alias("bright_magenta", "bright_purple")
+    c["bright_foreground"] = c.get("bright_foreground") or c.get("color15") or c["foreground"]
+    c["dark_foreground"] = c.get("dark_foreground") or c.get("color8") or c["foreground"]
+    c["muted"] = c.get("muted") or c.get("color8") or c["dark_foreground"]
+    c["selection"] = (c.get("selection") or c.get("selection_background") or c.get("color8")
+                      or c.get("color0") or c["background"])
+    alias("selection_background", "selection")
+    alias("selection_foreground", "bright_foreground")
+    for name in ["red", "yellow", "green", "cyan", "blue", "magenta"]:
+        if not c.get(f"bright_{name}") and HEX.match(c.get(name, "")):
+            c[f"bright_{name}"] = mix(c[name], "#ffffff", 0.20)
+    return c
+
+
+def render(colors):
+    def sub(m):
+        value = colors.get(m.group(1), "")
+        if not HEX.match(value):
+            raise ValueError(m.group(1))
+        return value.lower()
+    try:
+        return re.sub(r"\{\{ (\w+) \}\}", sub, GHOSTTY_TPL)
+    except ValueError as e:
+        die(f"couleur « {e} » absente ou invalide dans ce thème (attendu #rrggbb)")
+
+
+# --------------------------------------------------------------- ghostty ---
+def ghostty_config_path():
+    """Config existante (XDG d'abord, puis l'emplacement macOS), sinon XDG."""
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "ghostty" / "config"
+    mac = HOME / "Library/Application Support/com.mitchellh.ghostty/config"
+    for p in (xdg, mac):
+        if p.exists():
+            return p
+    return xdg
+
+
+def ensure_include():
+    cfg = ghostty_config_path()
+    line = f'config-file = ?"{THEME_CONF}"'
+    text = cfg.read_text() if cfg.exists() else ""
+    if str(THEME_CONF) in text:
+        return cfg, None
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    backup = None
+    if text:
+        backup = cfg.with_name(cfg.name + ".omarchy-bak")
+        shutil.copy2(cfg, backup)
+    sep = "" if not text or text.endswith("\n") else "\n"
+    cfg.write_text(f"{text}{sep}\n# Thème Omarchy (omarchy-ghostty-theme)\n{line}\n")
+    return cfg, backup or "créée"
+
+
+def reload_ghostty():
+    """SIGUSR2 = rechargement de config dans Ghostty (1.2+)."""
+    r = subprocess.run(["pgrep", "-x", "ghostty"], capture_output=True, text=True)
+    pids = [int(p) for p in r.stdout.split()]
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGUSR2)
+        except OSError:
+            pass
+    return bool(pids)
+
+
+# ------------------------------------------------------------- commandes ---
+def cmd_set(themes, query, reload=True):
+    theme = find_theme(themes, query)
+    base = raw_base(theme)
+    colors = None
+    text = fetch(base + "colors.toml")
+    if text:
+        colors = parse_colors_toml(text)
+    else:
+        text = fetch(base + "alacritty.toml")
+        if text:
+            colors = colors_from_alacritty(text)
+    if not colors:
+        die(f"{theme['name']} : ni colors.toml ni alacritty.toml exploitable sous {base}")
+
+    conf = render(resolve(colors))
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    THEME_CONF.write_text(f"# {theme['name']} — {theme['github_url']}\n{conf}")
+    CURRENT_FILE.write_text(f"{theme['slug']}\t{theme['name']}\n")
+
+    cfg, change = ensure_include()
+    print(f"✅ {theme['name']} → {THEME_CONF}")
+    if change == "créée":
+        print(f"   config Ghostty créée : {cfg}")
+    elif change:
+        print(f"   include ajouté à {cfg} (sauvegarde : {change})")
+    if reload:
+        if reload_ghostty():
+            print("   Ghostty rechargé")
+        else:
+            print("   Ghostty ne tourne pas — appliqué au prochain lancement")
+
+
+def cmd_pick(themes):
+    if not shutil.which("fzf"):
+        for t in themes:
+            print(f"{t['slug']:32} {t['name']}")
+        print("\nfzf absent (brew install fzf) — puis : omarchy-ghostty-theme set <slug>")
+        return
+    lines = "\n".join(f"{t['name']}\t{t['slug']}" for t in themes)
+    r = subprocess.run(["fzf", "--delimiter=\t", "--with-nth=1", "--prompt=thème> ",
+                        "--height=40%", "--reverse"],
+                       input=lines, capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        cmd_set(themes, r.stdout.strip().split("\t")[1])
+
+
+def main(argv):
+    args = [a for a in argv if a != "--no-reload"]
+    reload = "--no-reload" not in argv
+    cmd = args[0] if args else "pick"
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__.split("\n\n")[0] + "\n" + __doc__.split("\n\n")[1])
+    elif cmd == "current":
+        print(CURRENT_FILE.read_text().split("\t")[1].strip() if CURRENT_FILE.exists() else "aucun")
+    elif cmd == "refresh":
+        print(f"{len(load_catalog(force=True))} thèmes au catalogue")
+    elif cmd == "list":
+        for t in load_catalog():
+            print(f"{t['slug']:32} {t['name']}")
+    elif cmd == "set":
+        if len(args) < 2:
+            die("usage : omarchy-ghostty-theme set <nom>")
+        cmd_set(load_catalog(), " ".join(args[1:]), reload)
+    elif cmd == "pick":
+        cmd_pick(load_catalog())
+    else:
+        cmd_set(load_catalog(), " ".join(args), reload)   # raccourci : omarchy-ghostty-theme <nom>
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
