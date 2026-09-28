@@ -213,7 +213,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   skel      cp -af /etc/skel/. ~/   (sauvegarde préalable)
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
   shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
-  theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
+  theme     omarchy-theme-set en headless + câblage nvim/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
@@ -1072,16 +1072,11 @@ do_theme() {
   run omarchy-theme-set "$THEME" || die "thème '$THEME' inconnu (voir $OMARCHY_HOME/themes/)"
   ok "thème appliqué → ~/.local/state/omarchy/current/theme/"
 
-  # tmux : omarchy-theme-set-tmux exige une session vivante
-  if has tmux && has omarchy-theme-set-tmux; then
-    if ! (( DRY_RUN )); then
-      local created=0
-      tmux has-session -t devbox-theme 2>/dev/null || { tmux new -d -s devbox-theme; created=1; }
-      omarchy-theme-set-tmux || warn "omarchy-theme-set-tmux a échoué"
-      (( created )) && tmux kill-session -t devbox-theme 2>/dev/null || true
-    fi
-    ok "tmux thémé"
-  fi
+  # tmux : volontairement PAS d'omarchy-theme-set-tmux. Il fixe window-style
+  # (fond du thème) et réécrit la palette de chaque volet du serveur vivant :
+  # rejoué par sync-fleet, il repeignait les sessions ouvertes par-dessus le
+  # fond du terminal client (Ghostty). Sans serveur vivant, il n'a aucun effet
+  # durable. tmux garde donc les couleurs du terminal (tmux.conf : bg=default).
 
   # zellij : un lien + une ligne de config, zéro code
   if has zellij; then
