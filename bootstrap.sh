@@ -63,6 +63,8 @@ OMARCHY_PROTECTED=(locale skel vendor shell theme)
 # rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
 OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
+WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
+SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
 SUDO_NOPASSWD=0
 NO_REEXEC=0
 ROOT_MODE=0
@@ -188,6 +190,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   --skip <a,b>          saute ces étapes
   --with-tailscale      rejoint la tailnet (`tailscale up`, interactif) — actif par défaut
   --no-tailscale        désactive l'étape tailscale (ni join, ni operator/ssh/tag)
+  --with-socks5 [port]  proxy SOCKS5 (microsocks) écoutant UNIQUEMENT sur l'IP
+                        tailnet, port 1080 par défaut — désactivé par défaut
   --theme <nom>         thème omarchy (défaut: tokyo-night)
   --locales "<a b>"     locales à générer (défaut: "en_US.UTF-8 fr_BE.UTF-8")
   --start-dir <chemin>  répertoire de démarrage sous WSL (défaut: $HOME, 'keep' = off)
@@ -215,6 +219,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
   theme     omarchy-theme-set en headless + câblage nvim/tmux/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
+            (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
@@ -236,6 +241,8 @@ while [[ $# -gt 0 ]]; do
     --skip)           SKIP_LIST="$2"; shift 2 ;;
     --with-tailscale) WITH_TAILSCALE=1; shift ;;
     --no-tailscale)   WITH_TAILSCALE=0; shift ;;
+    --with-socks5)    WITH_SOCKS5=1
+                      if [[ "${2:-}" =~ ^[0-9]+$ ]]; then SOCKS5_PORT="$2"; shift 2; else shift; fi ;;
     --theme)          THEME="$2"; shift 2 ;;
     --locales)        LOCALES="$2"; shift 2 ;;
     --start-dir)      START_DIR="$2"; shift 2 ;;
@@ -258,6 +265,7 @@ passthru() {
   (( FORCE_SKEL ))     && a+=(--force-skel)
   (( FORCE_FULL ))     && a+=(--force-full)
   (( WITH_TAILSCALE )) || a+=(--no-tailscale)
+  (( WITH_SOCKS5 ))    && a+=(--with-socks5 "$SOCKS5_PORT")
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
 }
@@ -1129,6 +1137,58 @@ open_mosh_ufw() {
     || warn "ufw : règle mosh non posée — mosh retombera sur ssh"
 }
 
+# proxy SOCKS5 opt-in (--with-socks5) : microsocks lié à l'IP tailnet du nœud,
+# jamais 0.0.0.0 — injoignable hors tailnet, l'ACL Tailscale décide qui s'en
+# sert (sans auth côté proxy : tout nœud autorisé par l'ACL peut l'utiliser).
+# IP figée dans l'unité : une IP tailnet est stable pour un nœud donné.
+# Au boot, tailscale0 peut ne pas encore porter l'IP quand l'unité démarre :
+# le bind échoue, Restart=always la relance jusqu'à ce que l'IP soit là.
+# Sans le flag, rien n'est touché (ni installé, ni désactivé).
+SOCKS5_UNIT=devbox-socks5.service
+setup_socks5() {
+  (( WITH_SOCKS5 )) || return 0
+  [[ "$SOCKS5_PORT" =~ ^[0-9]+$ ]] && (( SOCKS5_PORT >= 1 && SOCKS5_PORT <= 65535 )) \
+    || die "--with-socks5 : port invalide « $SOCKS5_PORT »"
+  has microsocks || asroot pacman -S --needed --noconfirm microsocks
+  local ip
+  if (( DRY_RUN )); then ip="<ip-tailnet>"
+  else
+    ip="$(tailscale ip -4 2>/dev/null | head -1)"
+    [[ -n "$ip" ]] || { warn "SOCKS5 : pas d'IP tailnet — proxy non installé"; return 0; }
+  fi
+  local unit="[Unit]
+Description=devbox — proxy SOCKS5 (microsocks) sur la tailnet
+After=tailscaled.service network-online.target
+Wants=tailscaled.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/microsocks -i $ip -p $SOCKS5_PORT
+Restart=always
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target"
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait /etc/systemd/system/$SOCKS5_UNIT (microsocks -i $ip -p $SOCKS5_PORT)"
+  elif [[ "$(cat "/etc/systemd/system/$SOCKS5_UNIT" 2>/dev/null)" != "$unit" ]]; then
+    printf '%s\n' "$unit" | asroot tee "/etc/systemd/system/$SOCKS5_UNIT" >/dev/null
+    asroot systemctl daemon-reload
+    asroot systemctl restart "$SOCKS5_UNIT"
+  fi
+  asroot systemctl enable --now "$SOCKS5_UNIT"
+  if has ufw && asroot ufw status 2>/dev/null | grep -q '^Status: active'; then
+    asroot ufw allow in on tailscale0 to any port "$SOCKS5_PORT" proto tcp comment 'socks5 via tailnet' >/dev/null \
+      && ok "ufw : SOCKS5 (TCP $SOCKS5_PORT) ouvert sur tailscale0" \
+      || warn "ufw : règle SOCKS5 non posée"
+  fi
+  ok "proxy SOCKS5 actif : socks5://$TS_HOSTNAME:$SOCKS5_PORT ($ip) — à restreindre via l'ACL"
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   has tailscale || die "tailscale non installé (étape ③)."
@@ -1177,6 +1237,7 @@ do_tailscale() {
     warn "Tailscale SSH toujours inactif après tailscale up — sshd CONSERVÉ"
   fi
   open_mosh_ufw
+  setup_socks5
 }
 
 # ============================================================ ⑩ cli-auth =====
@@ -1379,6 +1440,8 @@ do_verify() {
   has tailscale && check "tailscale ssh actif" "sudo -n tailscale debug prefs 2>&1 | grep -q '\"RunSSH\": *true' && echo actif"
   has tailscale && check "opérateur tailscale" "sudo -n tailscale debug prefs 2>&1 | grep -q \"\\\"OperatorUser\\\": *\\\"\$(id -un)\\\"\" && id -un"
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
+  (( WITH_SOCKS5 )) || systemctl is-enabled --quiet "$SOCKS5_UNIT" 2>/dev/null && \
+    check "proxy SOCKS5 (tailnet)" "systemctl is-active --quiet $SOCKS5_UNIT && grep -o -- '-i [^ ]* -p [0-9]*' /etc/systemd/system/$SOCKS5_UNIT"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
   check "git hook actif"          "test \"\$(git -C '$SCRIPT_DIR' config --get core.hooksPath)\" = hooks && echo hooks"

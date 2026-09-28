@@ -36,6 +36,7 @@ mise trust                                       # une fois, config locale
 mise run bootstrap -- -n                         # git pull + dry-run
 mise run bootstrap                               # git pull + bootstrap pour de vrai (tailscale inclus)
 mise run bootstrap -- --no-tailscale             # sans rejoindre la tailnet
+mise run bootstrap -- --with-socks5             # + proxy SOCKS5 sur l'IP tailnet (port 1080)
 mise run pull                                    # juste la mise à jour, sans lancer bootstrap
 mise run bootstrap-only -- -n                    # sans pull (offline / debug)
 ```
@@ -237,6 +238,13 @@ intact.
   installé en local ET `mosh-server` présent sur l'hôte (sondé une fois par
   shell), sinon ssh. `DEVBOX_REMOTE=ssh` force ssh. Déployé aussi sur un
   vrai Omarchy (comme atuin : `OMARCHY_SAFE_RC` + loader ajouté à `~/.bashrc`).
+- 🧦 **Proxy SOCKS5 (opt-in)** : `--with-socks5 [port]` (1080 par défaut,
+  ou `DEVBOX_SOCKS5_PORT`) installe `microsocks` et l'unité
+  `devbox-socks5.service`, liée **à l'IP tailnet du nœud uniquement** (jamais
+  `0.0.0.0`), relancée tant que `tailscale0` n'a pas son IP au boot. Si ufw est
+  actif, le port est ouvert **sur `tailscale0` uniquement**. Pas d'auth côté
+  proxy : restreindre qui peut l'utiliser via l'ACL Tailscale (`tcp:1080`).
+  Client : `socks5://<hôte>:1080`. Sans le flag, rien n'est touché.
 - 🔁 **Sync de la flotte, dans tous les sens** : l'étape `hooks` pose
   `core.hooksPath=hooks` sur **chaque** clone (et branche `gh` comme helper
   git pour pousser sans terminal). Un commit sur `main`, depuis n'importe quel
