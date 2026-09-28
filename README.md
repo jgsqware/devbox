@@ -246,6 +246,17 @@ intact.
   actif, le port est ouvert **sur `tailscale0` uniquement**. Pas d'auth côté
   proxy : restreindre qui peut l'utiliser via l'ACL Tailscale (`tcp:1080`).
   Client : `socks5://<hôte>:1080`. Sans le flag, rien n'est touché.
+- 🦊 **Dépôts GitLab** : `repo [requête]` (`overlay/bash/rc.d/40-glab-repo.sh`)
+  ouvre un sélecteur fzf sur tous les projets du host glab (meilleur score
+  d'abord, activité récente à égalité, ● = déjà cloné), puis `cd` dans
+  `~/$(hostname -s)/<chemin/complet>` — en le clonant d'abord s'il manque.
+  Liste en cache (`~/.cache/devbox/`), rafraîchie en arrière-plan après 24 h ;
+  `ctrl-r` dans le sélecteur ou `repo --refresh` pour forcer. Périmètre par
+  machine : `GLAB_REPO_GROUPS=landbased-gaming` (virgules pour plusieurs) dans
+  `~/.config/devbox/rc.d/05-local-glab-repo.sh` (non versionné) → seuls ces
+  groupes sont proposés ; `ctrl-a` ou `repo --all` élargit, et Entrée sans
+  résultat propose d'élargir. Autres surcharges : `GLAB_REPO_ROOT`,
+  `GLAB_REPO_HOST`, `GLAB_REPO_TTL`.
 - 🔁 **Sync de la flotte, dans tous les sens** : l'étape `hooks` pose
   `core.hooksPath=hooks` sur **chaque** clone (et branche `gh` comme helper
   git pour pousser sans terminal). Un commit sur `main`, depuis n'importe quel
