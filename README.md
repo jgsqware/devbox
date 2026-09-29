@@ -82,6 +82,7 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `macos/omarchy-ghostty-theme` | thèmes Omarchy pour Ghostty **sur le poste hôte macOS** (voir plus bas) |
 | `TODO.md` | tâches en attente sur la flotte |
 | `hooks/post-commit` | après un commit sur `main` : push + `sync-fleet.sh` en arrière-plan (`mise run hooks` pour l'activer) |
+| `hooks/pre-commit` | **anti-fuite** : refuse un commit qui ajoute un motif de la `denylist` privée (voir « Couche privée ») |
 
 ## Thèmes Omarchy dans Ghostty sur macOS
 
@@ -143,6 +144,7 @@ l'étape `shell` rétablit la même chaîne depuis le dépôt vendoré :
          ├── init  →  mise · starship · zoxide · fzf
          └── inputrc
    └─▶ ~/.config/devbox/rc.d/*.sh        ← nos overrides, chargés en dernier
+         └─▶ 90-private.sh → ~/.config/devbox/private/rc.d/*.sh   ← couche privée
 ```
 
 Les configs copiées depuis le dépôt : `starship.toml` `tmux.conf`
@@ -169,10 +171,30 @@ Tout le reste vit dans des fichiers versionnés, chargés **dans l'ordre des nom
 | `10-env.sh` | `OMARCHY_PATH`, `OMARCHY_THEME_HEADLESS`, `PATH` (idempotent) | ✅ |
 | `20-start-dir.sh` | sous WSL, revient dans `$HOME` quand le shell démarre dans `/mnt/*` | ✅ |
 | `30-atuin.sh` | `atuin init bash` : historique (Ctrl-R, ↑), chargé après fzf donc il reprend Ctrl-R | ✅ |
+| `90-private.sh` | charge la couche privée (`~/.config/devbox/private/rc.d/*.sh`), si clonée | ✅ |
 | `05-local-start-dir.sh` | posé par `--start-dir`, propre au nœud | ❌ local |
 
 Ajouter un réglage = déposer un `NN-truc.sh` dans `overlay/bash/rc.d/` et rejouer
 `./bootstrap.sh --only vendor`. Rien à toucher dans `~/.bashrc`.
+
+### Couche privée
+
+Ce dépôt est **public** : rien d'interne n'y entre (hôtes, URL de travail,
+fonctions qui les contiennent). Ces réglages vivent dans un **dépôt git
+séparé, jamais publié** : un dépôt *bare* sur `node2`, joint en ssh via
+Tailscale — aucun service à faire tourner.
+
+- **Clone** : `bootstrap.sh` (étape shell) clone ou met à jour
+  `$DEVBOX_PRIVATE_REPO` (défaut `node2:git/devbox-private.git`) dans
+  `~/.config/devbox/private`. **Jamais bloquant** : node2 éteint, hors ligne ou
+  machine sans accès → avertissement, la dernière copie reste en place.
+- **Chargement** : `rc.d/90-private.sh` source `private/rc.d/*.sh`, après le
+  reste — le privé peut surcharger le public. Posé aussi sur un vrai Omarchy.
+- **Anti-fuite** : `hooks/pre-commit` refuse tout ajout d'un motif listé dans
+  `private/denylist` (chaînes fixes, insensibles à la casse). La liste est
+  privée, elle aussi.
+- **Modifier** : éditer dans `~/.config/devbox/private`, `git commit && git
+  push` ; les autres nœuds suivent au prochain `mise run bootstrap` / `sync`.
 
 ### Répertoire de démarrage
 

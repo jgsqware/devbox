@@ -42,6 +42,9 @@ PKG_FILE="$SCRIPT_DIR/packages.txt"
 AUR_PACKAGES=(worktrunk-bin)
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
+# couche privée (hôtes internes…) : dépôt git séparé, jamais publié — voir sync_private
+PRIVATE_REPO="${DEVBOX_PRIVATE_REPO:-node2:git/devbox-private.git}"
+PRIVATE_DIR="${DEVBOX_PRIVATE_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/devbox/private}"
 
 # ~/.local/bin n'est ajouté au PATH que par rc.d (shells interactifs) : lancé
 # en non interactif (sync-fleet, `bash -lc`), le script ne verrait pas ce
@@ -61,7 +64,7 @@ OMARCHY_WHY=""
 # moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
 OMARCHY_PROTECTED=(locale skel vendor shell theme)
 # rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
-OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh)
+OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 90-private.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
@@ -216,7 +219,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             — seulement si --hostname / $DEVBOX_HOSTNAME est fourni
   skel      cp -af /etc/skel/. ~/   (sauvegarde préalable)
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
-  shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy + identité git
+  shell     ~/.bashrc + rc.d (+ couche privée) + prompt starship & configs du dépôt omarchy + identité git
   theme     omarchy-theme-set en headless + câblage nvim/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
@@ -969,6 +972,25 @@ install_git_identity() {
   fi
 }
 
+# Couche privée : clone ou met à jour $PRIVATE_REPO dans $PRIVATE_DIR, chargé
+# ensuite par rc.d/90-private.sh. JAMAIS bloquant : machine sans accès, node2
+# éteint, hors ligne → avertissement, et la dernière copie (s'il y en a une)
+# reste en place. BatchMode : pas de prompt ssh pendant un sync de la flotte.
+sync_private() {
+  local ssh_cmd="ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new"
+  if [[ -d "$PRIVATE_DIR/.git" ]]; then
+    if run env GIT_SSH_COMMAND="$ssh_cmd" git -C "$PRIVATE_DIR" pull -q --ff-only; then
+      ok "couche privée à jour → $PRIVATE_DIR"
+    else
+      warn "couche privée : pull impossible ($PRIVATE_REPO) — dernière copie conservée"
+    fi
+  elif run env GIT_SSH_COMMAND="$ssh_cmd" git clone -q "$PRIVATE_REPO" "$PRIVATE_DIR" 2>/dev/null; then
+    ok "couche privée clonée → $PRIVATE_DIR"
+  else
+    warn "couche privée : $PRIVATE_REPO injoignable — ignorée (DEVBOX_PRIVATE_REPO pour changer)"
+  fi
+}
+
 # Sur un vrai Omarchy : ni ~/.bashrc, ni tmux/btop/git, ni le moteur — on ne
 # touche qu'au hostname coloré du prompt, en place et avec sauvegarde de
 # starship.toml avant la toute première modification.
@@ -994,6 +1016,7 @@ do_shell_light() {
     run cp -af "$OVERLAY_DIR/bash/rc.d/$f" "$RC_D/$f"
     copied+=("$f")
   done
+  sync_private
   (( ${#copied[@]} )) || return 0
   ok "rc.d déposés → $RC_D : ${copied[*]}"
   if grep -q 'devbox/rc.d' "$HOME/.bashrc" 2>/dev/null; then
@@ -1041,6 +1064,7 @@ do_shell() {
     run cp -af "$OVERLAY_DIR/bash/rc.d/." "$RC_D/"
     ok "overlay rc.d déposé → $RC_D ($(ls "$OVERLAY_DIR/bash/rc.d" | wc -l | tr -d ' ') fichiers)"
   fi
+  sync_private
 
   # override local (NE converge pas : propre à ce nœud)
   if [[ -n "$START_DIR" ]]; then

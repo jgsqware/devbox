@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# devbox — anti-fuite : refuse un commit qui AJOUTE un motif interdit (hôte
+# interne, URL de travail…) dans ce dépôt public.
+#
+# La liste des motifs est elle-même privée : `denylist` du dépôt privé
+# (~/.config/devbox/private/denylist), un motif par ligne, chaîne fixe,
+# insensible à la casse, # = commentaire. Pas de liste → pas de contrôle.
+#
+# Activé par : git config core.hooksPath hooks   (mise run hooks)
+# Passer outre ponctuellement : git commit --no-verify
+
+denylist="${DEVBOX_PRIVATE_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/devbox/private}/denylist"
+[[ -r "$denylist" ]] || exit 0
+
+patterns="$(grep -vE '^[[:space:]]*(#|$)' "$denylist")"
+[[ -n "$patterns" ]] || exit 0
+
+found=0
+while IFS= read -r -d '' file; do
+  # seules les lignes AJOUTÉES comptent (pas le contexte, pas les suppressions)
+  hits="$(git diff --cached -U0 --no-color -- "$file" \
+    | grep -E '^\+' | grep -vE '^\+\+\+ ' | cut -c2- \
+    | grep -iF -e "$patterns")" || continue
+  printf 'devbox: motif privé dans %s :\n%s\n' "$file" "$(sed 's/^/  /' <<<"$hits")" >&2
+  found=1
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
+if (( found )); then
+  echo "devbox: commit refusé — dépôt PUBLIC. Déplace ça dans ~/.config/devbox/private (ou --no-verify)." >&2
+  exit 1
+fi
