@@ -39,3 +39,19 @@ Je lis vite et en diagonale : rends chaque réponse facile à scanner.
 
 Reste clair et complet : on ne coupe pas d'information utile, on la
 rend lisible. Pas de jargon inventé ni d'abréviations obscures.
+
+## Notes Obsidian par défaut
+
+Après une analyse, une étude (comparaison d'outils, etc.) ou un gros
+morceau de travail, écris ou mets à jour une note dans le coffre Obsidian
+(MCP `obsidian`) **sans demander**, puis donne le lien `obsidian://`.
+
+- **Dossier** : `{{HOSTNAME}}/<projet>/` — le nom de ce poste. Si un
+  dossier racine du coffre porte déjà ce nom à la casse près (ex.
+  `Gaming1/` pour `gaming1`), utilise-le au lieu d'en créer un autre.
+- **Lis avant d'écrire** : l'écriture remplace tout le contenu de la note.
+  Mets à jour la note existante du projet plutôt que d'en créer un doublon.
+- **Style du coffre** : frontmatter YAML (date, type, projet, tags), en
+  français, callouts (`> [!abstract]`, `> [!warning]`, `> [!tip]`),
+  tableaux, `[[wikilinks]]` entre notes.
+- **Jamais** `{{HOSTNAME}}/daily/` : notes quotidiennes générées ailleurs.

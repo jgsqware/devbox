@@ -221,7 +221,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
-  claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
+  claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md ({{HOSTNAME}} → hostname)
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1316,7 +1316,8 @@ do_claude_plugins() {
     mkdir -p "${md%/*}"; touch "$md"
     local rest; rest="$(awk -v b="$begin" -v e="$end" '$0==b{skip=1;next} $0==e{skip=0;next} !skip' "$md")"
     { [[ -n "${rest//[$'\n' ]/}" ]] && printf '%s\n\n' "$rest"
-      echo "$begin"; cat "$src_md"; echo "$end"; } > "$md.tmp"
+      # {{HOSTNAME}} → nom de CE poste (dossier Obsidian par machine)
+      echo "$begin"; sed "s/{{HOSTNAME}}/$(hostname -s 2>/dev/null || echo devbox)/g" "$src_md"; echo "$end"; } > "$md.tmp"
     if cmp -s "$md" "$md.tmp"; then rm -f "$md.tmp"; ok "$md déjà à jour"
     else mv "$md.tmp" "$md"; ok "bloc devbox écrit → $md"; fi
   fi
