@@ -1,5 +1,5 @@
 # devbox — liste écrémée (réf. analyse §10.3 + §11.9)
-# 50 paquets, ZÉRO AUR. Seuls 3 viennent du dépôt [omarchy].
+# 60 paquets, ZÉRO AUR. Seuls 3 viennent du dépôt [omarchy].
 # Tout ajout ici se propage à tous les nœuds : c'est la source de vérité.
 
 # --- socle ---------------------------------------------------------------
@@ -68,3 +68,14 @@ tailscale
 ufw                   # auto-skippé sur WSL (pas de netfilter persistant)
 openssh               # binaire ssh (client) — sshd désactivé par cleanup_sshd
 mosh                  # mosh-server (lancé via Tailscale SSH) + client mosh — cf. alias `s`
+
+# --- diagnostic réseau ---------------------------------------------------
+doggo                 # dig moderne (DoH/DoT, sortie lisible) — `doggo exemple.com`
+bind                  # dig/nslookup/host classiques, pour comparer
+gping                 # ping en graphe, plusieurs hôtes à la fois
+trippy                # traceroute + mtr en TUI — binaire `trip`
+bandwhich             # débit par process/connexion (sudo)
+xh                    # curl/httpie en plus rapide — `xh GET url`
+nmap
+iperf3
+tcpdump

@@ -8,6 +8,7 @@
 #   mise run sync                         bootstrap sur toutes les machines tag:omarchy
 #   mise run hooks                        active le hook post-commit (push + sync auto)
 #   mise run socks5-test [hôte] [port]    teste le proxy SOCKS5 (--with-socks5)
+#   mise run upgrade [-- -n]              met à jour pacman, AUR, mise, claude (-n : dry-run)
 
 [tasks.pull]
 description = "git pull --ff-only"
@@ -33,3 +34,7 @@ run = "git config core.hooksPath hooks"
 [tasks.socks5-test]
 description = "teste le proxy SOCKS5 tailnet (défaut : ce nœud, port 1080)"
 run = "./socks5-test.sh"
+
+[tasks.upgrade]
+description = "met à jour pacman, AUR (yay), mise, claude (-n : dry-run)"
+run = "./upgrade.sh"

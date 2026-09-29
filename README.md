@@ -38,6 +38,7 @@ mise run bootstrap                               # git pull + bootstrap pour de 
 mise run bootstrap -- --no-tailscale             # sans rejoindre la tailnet
 mise run bootstrap -- --with-socks5             # + proxy SOCKS5 sur l'IP tailnet (port 1080)
 mise run socks5-test [hôte] [port]               # teste ce proxy (défaut : ce nœud, 1080)
+mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude (-n : dry-run)
 mise run pull                                    # juste la mise à jour, sans lancer bootstrap
 mise run bootstrap-only -- -n                    # sans pull (offline / debug)
 ```

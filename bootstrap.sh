@@ -61,7 +61,7 @@ OMARCHY_WHY=""
 # moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
 OMARCHY_PROTECTED=(locale skel vendor shell theme)
 # rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
-OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh)
+OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
@@ -954,7 +954,7 @@ EOF
 # touche qu'au hostname coloré du prompt, en place et avec sauvegarde de
 # starship.toml avant la toute première modification.
 do_shell_light() {
-  step "⑦" "Prompt hostname + rc.d atuin/s (Omarchy détecté — reste de l'étape sauté)"
+  step "⑦" "Prompt hostname + rc.d atuin/s/c/git (Omarchy détecté — reste de l'étape sauté)"
   local toml="$HOME/.config/starship.toml"
   if [[ -f "$toml" ]] && ! grep -q '^format.*\$hostname' "$toml"; then
     run mkdir -p "$BACKUP_DIR/.config"
