@@ -1,0 +1,23 @@
+# devbox — identité git, incluse depuis ~/.gitconfig (déposée par bootstrap).
+# ~/.config/git/config appartient à Omarchy (réécrit par bootstrap) : rien ici.
+#
+# Défaut : projets perso. Dépôts dont un remote pointe sur le GitLab IBA
+# (gitee / gitlab.sw.iba.net, https ou ssh) : identité IBA.
+# Vérifier dans un dépôt : git config user.email
+
+[user]
+	name = Julien Garcia Gonzalez
+	email = julien@jgsquare.io
+
+[includeIf "hasconfig:remote.*.url:https://gitee.sw.iba.net/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:git@gitee.sw.iba.net:*/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:ssh://git@gitee.sw.iba.net/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:https://gitlab.sw.iba.net/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:git@gitlab.sw.iba.net:*/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:ssh://git@gitlab.sw.iba.net/**"]
+	path = identity-iba

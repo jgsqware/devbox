@@ -216,7 +216,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             — seulement si --hostname / $DEVBOX_HOSTNAME est fourni
   skel      cp -af /etc/skel/. ~/   (sauvegarde préalable)
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
-  shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy
+  shell     ~/.bashrc + rc.d + prompt starship & configs du dépôt omarchy + identité git
   theme     omarchy-theme-set en headless + câblage nvim/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
@@ -950,11 +950,30 @@ EOF
   ok "hostname du prompt : $host ($color)"
 }
 
+# Identité git (perso par défaut, IBA sur les remotes gitee/gitlab.sw.iba.net) :
+# fichiers de overlay/git/ déposés dans ~/.config/devbox/git/, inclus depuis
+# ~/.gitconfig. Jamais dans ~/.config/git/config : Omarchy le possède et
+# DOTCONFIGS le réécrit. --file explicite : sans lui, `git config --global`
+# écrit dans ~/.config/git/config quand ~/.gitconfig n'existe pas encore.
+install_git_identity() {
+  [[ -r "$OVERLAY_DIR/git/identity" ]] || return 0
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/git" inc
+  run mkdir -p "$dir"
+  run cp -af "$OVERLAY_DIR/git/." "$dir/"
+  inc="$dir/identity"
+  if git config --file "$HOME/.gitconfig" --get-all include.path 2>/dev/null | grep -qxF "$inc"; then
+    ok "identité git déjà incluse dans ~/.gitconfig"
+  else
+    run git config --file "$HOME/.gitconfig" --add include.path "$inc"
+    ok "identité git incluse dans ~/.gitconfig (perso ; IBA sur gitee/gitlab.sw.iba.net)"
+  fi
+}
+
 # Sur un vrai Omarchy : ni ~/.bashrc, ni tmux/btop/git, ni le moteur — on ne
 # touche qu'au hostname coloré du prompt, en place et avec sauvegarde de
 # starship.toml avant la toute première modification.
 do_shell_light() {
-  step "⑦" "Prompt hostname + rc.d atuin/s/c/git (Omarchy détecté — reste de l'étape sauté)"
+  step "⑦" "Prompt hostname + identité git + rc.d atuin/s/c/git (Omarchy détecté — reste de l'étape sauté)"
   local toml="$HOME/.config/starship.toml"
   if [[ -f "$toml" ]] && ! grep -q '^format.*\$hostname' "$toml"; then
     run mkdir -p "$BACKUP_DIR/.config"
@@ -962,6 +981,7 @@ do_shell_light() {
     info "sauvegarde: $BACKUP_DIR/.config/starship.toml"
   fi
   configure_starship_hostname
+  install_git_identity
 
   # rc.d « sûrs » sur un vrai Omarchy : SEULS ceux-là sont posés ici —
   # 10-env.sh forcerait OMARCHY_THEME_HEADLESS=1 et un OMARCHY_PATH devbox,
@@ -1044,6 +1064,7 @@ do_shell() {
   done
   ok "$n configs installées (starship.toml, tmux, lazygit, btop, git)"
   configure_starship_hostname
+  install_git_identity
 
   # terminfo Ghostty (TERM=xterm-ghostty) : Ghostty ne le publie pas en tant
   # que source (généré à sa compilation) et [omarchy] ne le publie qu'en
