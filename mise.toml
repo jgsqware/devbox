@@ -9,6 +9,9 @@
 #   mise run hooks                        active le hook post-commit (push + sync auto)
 #   mise run socks5-test [hôte] [port]    teste le proxy SOCKS5 (--with-socks5)
 #   mise run upgrade [-- -n]              met à jour pacman, AUR, mise, claude (-n : dry-run)
+#   mise run packages [-- -n]             installe packages.txt sur ce poste (+ AUR, twg), sans pull
+#   mise run pkg-commit [-- -n]           commite packages.txt, message généré depuis le diff (-n : l'affiche)
+#   mise run warp-reauth [hôte] [url]     ré-auth WARP sur l'hôte distant (fonction de la couche privée)
 
 [tasks.pull]
 description = "git pull --ff-only"
@@ -35,6 +38,20 @@ run = "git config core.hooksPath hooks"
 description = "teste le proxy SOCKS5 tailnet (défaut : ce nœud, port 1080)"
 run = "./socks5-test.sh"
 
+[tasks.packages]
+description = "installe packages.txt sur ce poste (étape packages du bootstrap, sans pull)"
+run = "./bootstrap.sh --only packages"
+
+[tasks.pkg-commit]
+description = "commite packages.txt avec un message généré (« paquets : + x, − y »)"
+run = "./pkg-commit.sh"
+
 [tasks.upgrade]
 description = "met à jour pacman, AUR (yay), mise, claude (-n : dry-run)"
 run = "./upgrade.sh"
+
+# L'hôte et l'URL sont privés : la tâche ne fait qu'appeler `warp-reauth`,
+# définie dans la couche privée (~/.config/devbox/private/rc.d/).
+[tasks.warp-reauth]
+description = "ré-authentifie WARP sur l'hôte distant, puis teste GitLab (couche privée)"
+run = """bash -c 'source overlay/bash/rc.d/90-private.sh; declare -F warp-reauth >/dev/null || { echo "warp-reauth absent : couche privée non clonée (mise run bootstrap)" >&2; exit 1; }; warp-reauth "$@"' warp-reauth"""
