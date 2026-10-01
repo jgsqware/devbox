@@ -1007,6 +1007,25 @@ EOF
 # ~/.gitconfig. Jamais dans ~/.config/git/config : Omarchy le possède et
 # DOTCONFIGS le réécrit. --file explicite : sans lui, `git config --global`
 # écrit dans ~/.config/git/config quand ~/.gitconfig n'existe pas encore.
+# Tâches mise GLOBALES (appelables de n'importe où) : drop-in conf.d plutôt
+# que ~/.config/mise/config.toml, qui peut appartenir à l'utilisateur/Omarchy.
+# Pointe sur le script du dépôt : un git pull suffit à le mettre à jour.
+install_mise_global_tasks() {
+  local f="${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/devbox.toml" want
+  want="# devbox — posé par bootstrap.sh (install_mise_global_tasks), ne pas éditer
+[tasks.pkg-add]
+description = \"devbox : cherche, installe, ajoute à packages.txt, commite, pousse, resync la flotte\"
+file = \"$SCRIPT_DIR/pkg-add.sh\""
+  if [[ -f "$f" && "$(cat "$f")" == "$want" ]]; then
+    ok "tâche mise globale pkg-add déjà en place"
+    return 0
+  fi
+  run mkdir -p "$(dirname "$f")"
+  if (( DRY_RUN )); then info "écrirait $f (tâche globale pkg-add)"; return 0; fi
+  printf '%s\n' "$want" > "$f"
+  ok "tâche mise globale : mise run pkg-add <paquet> (de n'importe où) — $f"
+}
+
 install_git_identity() {
   [[ -r "$OVERLAY_DIR/git/identity" ]] || return 0
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/git" inc
@@ -1053,6 +1072,7 @@ do_shell_light() {
   fi
   configure_starship_hostname
   install_git_identity
+  install_mise_global_tasks
 
   # rc.d « sûrs » sur un vrai Omarchy : SEULS ceux-là sont posés ici —
   # 10-env.sh forcerait OMARCHY_THEME_HEADLESS=1 et un OMARCHY_PATH devbox,
@@ -1138,6 +1158,7 @@ do_shell() {
   ok "$n configs installées (starship.toml, tmux, lazygit, btop, git)"
   configure_starship_hostname
   install_git_identity
+  install_mise_global_tasks
 
   # terminfo Ghostty (TERM=xterm-ghostty) : Ghostty ne le publie pas en tant
   # que source (généré à sa compilation) et [omarchy] ne le publie qu'en
@@ -1587,6 +1608,7 @@ do_verify() {
   # worktrunk-bin installe le binaire `wt`, pas `worktrunk` — via pacman
   # (AUR/yay) OU via install_worktrunk_fallback (~/.local/bin/wt, GitHub direct)
   check "worktrunk (wt)"          "command -v wt >/dev/null 2>&1 && wt --version 2>&1 | head -1"
+  check "mise pkg-add (global)"   "(cd / && mise tasks 2>/dev/null | grep -q '^pkg-add ') && echo 'mise run pkg-add'"
   check "twg (Teamwork Graph)"    "command -v twg >/dev/null 2>&1 && twg -v 2>&1 | head -1"
   has gh     && check "gh authentifié"    "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
