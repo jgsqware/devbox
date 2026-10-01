@@ -42,6 +42,7 @@ mise run bootstrap -- --with-livesync-relay https://<nœud>.<tailnet>.ts.net   #
 mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude (-n : dry-run)
 mise run packages [-- -n]                        # installe packages.txt sur ce poste (sans pull)
 mise run pkg-commit [-- -n]                      # commite packages.txt, message généré depuis le diff
+mise run pkg-add [paquet…] [-s section] [-y] [-n] [--no-sync]   # GLOBAL (de n'importe où) : cherche dépôts+AUR, installe, ajoute, commite, pousse, resync
 mise run pull                                    # juste la mise à jour, sans lancer bootstrap
 mise run bootstrap-only -- -n                    # sans pull (offline / debug)
 ```

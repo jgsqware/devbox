@@ -11,6 +11,7 @@
 #   mise run upgrade [-- -n]              met à jour pacman, AUR, mise, claude (-n : dry-run)
 #   mise run packages [-- -n]             installe packages.txt sur ce poste (+ AUR, twg), sans pull
 #   mise run pkg-commit [-- -n]           commite packages.txt, message généré depuis le diff (-n : l'affiche)
+#   mise run pkg-add <paquet> [-n]        GLOBALE (posée par bootstrap) : cherche, installe, ajoute, commite, pousse
 #   mise run warp-reauth [hôte] [url]     ré-auth WARP sur l'hôte distant (fonction de la couche privée)
 
 [tasks.pull]
