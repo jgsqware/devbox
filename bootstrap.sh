@@ -644,6 +644,43 @@ install_worktrunk_fallback() {
   ok "worktrunk (wt) installé depuis les releases GitHub (sha256 vérifié) — fallback temporaire, PKGBUILD AUR cassé. ~/.local/bin/wt"
 }
 
+# Teamwork Graph CLI (Atlassian) : ni pacman ni AUR. On ne passe PAS par
+# l'installeur officiel (curl … | bash) : il enchaîne `twg setup finalize`
+# (consentement CGU, login navigateur, skills d'agents, ligne PATH dans le
+# profil shell, télémétrie). Ici : binaire seul dans ~/.local/bin, sha256
+# vérifié contre le SHA256SUMS publié — aucune config. Consentement, login et
+# skills restent à faire à la main (twg consent / login / skills install).
+# La version suit DEFAULT_VERSION de l'installeur : réinstalle si elle change.
+install_twg() {
+  local base="https://teamwork-graph.atlassian.com/cli" tw_arch ver cur asset tmp exp
+  case "$ARCH" in
+    x86_64) tw_arch=x64 ;;
+    aarch64) tw_arch=arm64 ;;
+    *) warn "twg : pas de binaire publié pour $ARCH — sauté"; return 1 ;;
+  esac
+  ver="$(curl -fsSL --max-time 30 "$base/install" | sed -n 's/^DEFAULT_VERSION="\([0-9.]*\)"$/\1/p')"
+  [[ -n "$ver" ]] || { warn "twg : version introuvable dans $base/install — sauté"; return 1; }
+  cur=""; has twg && cur="$(twg -v 2>/dev/null | head -1)"
+  [[ "$cur" == "$ver" ]] && { ok "twg $ver déjà installé"; return 0; }
+  if (( DRY_RUN )); then
+    info "twg ${cur:+$cur → }$ver — aurait installé dans ~/.local/bin (dry-run)"
+    return 0
+  fi
+
+  asset="twg-linux-${tw_arch}-v${ver}"
+  tmp="$STATE_DIR/dl/twg"
+  rm -rf "${tmp:?}"; mkdir -p "$tmp"
+  curl -fsSL --retry 2 "$base/$asset" -o "$tmp/$asset" || { warn "twg : téléchargement échoué ($asset)"; return 1; }
+  curl -fsSL --retry 2 "$base/SHA256SUMS-v$ver" -o "$tmp/SHA256SUMS" \
+    || { warn "twg : téléchargement de SHA256SUMS échoué — installation refusée sans vérification"; return 1; }
+  exp="$(awk -v f="$asset" '{n=$2; sub(/^\*/,"",n)} n==f{print $1}' "$tmp/SHA256SUMS")"
+  [[ -n "$exp" && "$(sha256sum "$tmp/$asset" | awk '{print $1}')" == "$exp" ]] \
+    || { warn "twg : sha256 invalide — installation refusée"; return 1; }
+  install -Dm755 "$tmp/$asset" "$HOME/.local/bin/twg" || { warn "twg : installation du binaire échouée"; return 1; }
+  rm -rf "${tmp:?}"
+  ok "twg ${cur:+$cur → }$ver installé (sha256 vérifié) — ~/.local/bin/twg, sans config : twg consent / login / skills install à la main"
+}
+
 do_packages() {
   step "③" "Paquets"
   local pkgs=() dropped=() unavailable=() rescued=() provided=() p
@@ -743,6 +780,8 @@ do_packages() {
       fi
     done
   fi
+
+  install_twg || true
 }
 
 # ============================================================= ④ locales ====
@@ -1548,7 +1587,8 @@ do_verify() {
   # worktrunk-bin installe le binaire `wt`, pas `worktrunk` — via pacman
   # (AUR/yay) OU via install_worktrunk_fallback (~/.local/bin/wt, GitHub direct)
   check "worktrunk (wt)"          "command -v wt >/dev/null 2>&1 && wt --version 2>&1 | head -1"
-  has gh     && check "gh authentifié"     "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
+  check "twg (Teamwork Graph)"    "command -v twg >/dev/null 2>&1 && twg -v 2>&1 | head -1"
+  has gh     && check "gh authentifié"    "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
