@@ -62,6 +62,7 @@ fakeroot
 pacman-contrib
 expac
 yay                   # dépôt [omarchy]
+ffmpeg
 
 # --- secrets / réseau ----------------------------------------------------
 1password-cli
