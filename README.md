@@ -38,6 +38,7 @@ mise run bootstrap                               # git pull + bootstrap pour de 
 mise run bootstrap -- --no-tailscale             # sans rejoindre la tailnet
 mise run bootstrap -- --with-socks5             # + proxy SOCKS5 sur l'IP tailnet (port 1080)
 mise run socks5-test [hôte] [port]               # teste ce proxy (défaut : ce nœud, 1080)
+mise run bootstrap -- --with-livesync-relay https://<nœud>.<tailnet>.ts.net   # + relais LiveSync (localhost:5984)
 mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude (-n : dry-run)
 mise run pull                                    # juste la mise à jour, sans lancer bootstrap
 mise run bootstrap-only -- -n                    # sans pull (offline / debug)
@@ -269,6 +270,14 @@ intact.
   actif, le port est ouvert **sur `tailscale0` uniquement**. Pas d'auth côté
   proxy : restreindre qui peut l'utiliser via l'ACL Tailscale (`tcp:1080`).
   Client : `socks5://<hôte>:1080`. Sans le flag, rien n'est touché.
+- 📓 **Relais Obsidian LiveSync (opt-in)** : `--with-livesync-relay <url> [port]`
+  pour un hôte **hors tailnet** qui héberge ce nœud (Mac → VM OrbStack).
+  L'unité `devbox-livesync-relay.service` (socat) écoute en HTTP sur
+  **`127.0.0.1:5984`** (ou `DEVBOX_LIVESYNC_PORT`) et ouvre elle-même le TLS
+  vers `<url>` (certificat `ts.net` vérifié). OrbStack publie le port sur
+  `localhost` du Mac : dans Obsidian, URI **`http://localhost:5984`**, rien à
+  écrire dans `/etc/hosts`. Invisible depuis la tailnet ; le clair ne quitte
+  pas la machine physique. Sans le flag, rien n'est touché.
 - 🦊 **Dépôts GitLab** : `repo [requête]` (`overlay/bash/rc.d/40-glab-repo.sh`)
   ouvre un sélecteur fzf sur tous les projets du host glab (meilleur score
   d'abord, activité récente à égalité, ● = déjà cloné), puis `cd` dans

@@ -68,6 +68,8 @@ OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 90-private.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
+LIVESYNC_URL=""                                       # opt-in — --with-livesync-relay <https://…> (relais Obsidian LiveSync)
+LIVESYNC_PORT="${DEVBOX_LIVESYNC_PORT:-5984}"
 SUDO_NOPASSWD=0
 NO_REEXEC=0
 ROOT_MODE=0
@@ -195,6 +197,10 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   --no-tailscale        désactive l'étape tailscale (ni join, ni operator/ssh/tag)
   --with-socks5 [port]  proxy SOCKS5 (microsocks) écoutant UNIQUEMENT sur l'IP
                         tailnet, port 1080 par défaut — désactivé par défaut
+  --with-livesync-relay <url> [port]
+                        relais Obsidian LiveSync : http://127.0.0.1:<port> (5984
+                        par défaut) ──TLS──▶ <url> (https://…ts.net) — pour un
+                        hôte hors tailnet (Mac sous OrbStack) — désactivé par défaut
   --theme <nom>         thème omarchy (défaut: tokyo-night)
   --locales "<a b>"     locales à générer (défaut: "en_US.UTF-8 fr_BE.UTF-8")
   --start-dir <chemin>  répertoire de démarrage sous WSL (défaut: $HOME, 'keep' = off)
@@ -223,6 +229,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   theme     omarchy-theme-set en headless + câblage nvim/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
+            (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
@@ -246,6 +253,8 @@ while [[ $# -gt 0 ]]; do
     --no-tailscale)   WITH_TAILSCALE=0; shift ;;
     --with-socks5)    WITH_SOCKS5=1
                       if [[ "${2:-}" =~ ^[0-9]+$ ]]; then SOCKS5_PORT="$2"; shift 2; else shift; fi ;;
+    --with-livesync-relay) LIVESYNC_URL="${2:-}"
+                      if [[ "${3:-}" =~ ^[0-9]+$ ]]; then LIVESYNC_PORT="$3"; shift 3; else shift 2; fi ;;
     --theme)          THEME="$2"; shift 2 ;;
     --locales)        LOCALES="$2"; shift 2 ;;
     --start-dir)      START_DIR="$2"; shift 2 ;;
@@ -269,6 +278,7 @@ passthru() {
   (( FORCE_FULL ))     && a+=(--force-full)
   (( WITH_TAILSCALE )) || a+=(--no-tailscale)
   (( WITH_SOCKS5 ))    && a+=(--with-socks5 "$SOCKS5_PORT")
+  [[ -n "$LIVESYNC_URL" ]] && a+=(--with-livesync-relay "$LIVESYNC_URL" "$LIVESYNC_PORT")
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
 }
@@ -1229,6 +1239,51 @@ WantedBy=multi-user.target"
   ok "proxy SOCKS5 actif : socks5://$TS_HOSTNAME:$SOCKS5_PORT ($ip) — à restreindre via l'ACL"
 }
 
+# relais Obsidian LiveSync opt-in (--with-livesync-relay <url>) : pour un hôte
+# qui n'est PAS sur la tailnet mais héberge ce nœud (Mac → VM OrbStack). socat
+# écoute en HTTP sur 127.0.0.1 — OrbStack le publie sur localhost du Mac, la
+# tailnet ne le voit pas — et ouvre lui-même le TLS vers <url>, certificat
+# ts.net vérifié contre les CA système. Le nom du certificat colle donc
+# toujours : rien à écrire dans /etc/hosts côté Mac, Obsidian pointe sur
+# http://localhost:<port>. Le clair ne quitte pas la machine physique.
+# Sans le flag, rien n'est touché.
+LIVESYNC_UNIT=devbox-livesync-relay.service
+setup_livesync_relay() {
+  [[ -n "$LIVESYNC_URL" ]] || return 0
+  [[ "$LIVESYNC_URL" =~ ^https://([A-Za-z0-9.-]+)(:([0-9]+))?/?$ ]] \
+    || die "--with-livesync-relay : URL https://hôte[:port] attendue, pas « $LIVESYNC_URL »"
+  local host="${BASH_REMATCH[1]}" rport="${BASH_REMATCH[3]:-443}"
+  [[ "$LIVESYNC_PORT" =~ ^[0-9]+$ ]] && (( LIVESYNC_PORT >= 1 && LIVESYNC_PORT <= 65535 )) \
+    || die "--with-livesync-relay : port invalide « $LIVESYNC_PORT »"
+  has socat || asroot pacman -S --needed --noconfirm socat
+  local unit="[Unit]
+Description=devbox — relais Obsidian LiveSync 127.0.0.1:$LIVESYNC_PORT -> $LIVESYNC_URL
+After=tailscaled.service network-online.target
+Wants=tailscaled.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:$LIVESYNC_PORT,bind=127.0.0.1,fork,reuseaddr OPENSSL:$host:$rport,verify=1,cafile=/etc/ssl/certs/ca-certificates.crt
+Restart=always
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target"
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait /etc/systemd/system/$LIVESYNC_UNIT (127.0.0.1:$LIVESYNC_PORT -> $host:$rport)"
+  elif [[ "$(cat "/etc/systemd/system/$LIVESYNC_UNIT" 2>/dev/null)" != "$unit" ]]; then
+    printf '%s\n' "$unit" | asroot tee "/etc/systemd/system/$LIVESYNC_UNIT" >/dev/null
+    asroot systemctl daemon-reload
+    asroot systemctl restart "$LIVESYNC_UNIT"
+  fi
+  asroot systemctl enable --now "$LIVESYNC_UNIT"
+  ok "relais LiveSync actif : Obsidian → http://localhost:$LIVESYNC_PORT (→ $LIVESYNC_URL)"
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   has tailscale || die "tailscale non installé (étape ③)."
@@ -1278,6 +1333,7 @@ do_tailscale() {
   fi
   open_mosh_ufw
   setup_socks5
+  setup_livesync_relay
 }
 
 # ============================================================ ⑩ cli-auth =====
@@ -1482,6 +1538,8 @@ do_verify() {
   has tailscale && check "tag:omarchy" "tailscale status --self --json 2>/dev/null | grep -q 'tag:omarchy' && echo 'tag:omarchy'"
   (( WITH_SOCKS5 )) || systemctl is-enabled --quiet "$SOCKS5_UNIT" 2>/dev/null && \
     check "proxy SOCKS5 (tailnet)" "systemctl is-active --quiet $SOCKS5_UNIT && grep -o -- '-i [^ ]* -p [0-9]*' /etc/systemd/system/$SOCKS5_UNIT"
+  [[ -n "$LIVESYNC_URL" ]] || systemctl is-enabled --quiet "$LIVESYNC_UNIT" 2>/dev/null && \
+    check "relais LiveSync" "systemctl is-active --quiet $LIVESYNC_UNIT && grep -o -- '-> .*' /etc/systemd/system/$LIVESYNC_UNIT"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
   check "git hook actif"          "test \"\$(git -C '$SCRIPT_DIR' config --get core.hooksPath)\" = hooks && echo hooks"
