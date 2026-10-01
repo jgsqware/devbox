@@ -39,7 +39,7 @@ PKG_FILE="$SCRIPT_DIR/packages.txt"
 # Unique exception au "zéro AUR" de packages.txt (voir do_packages) — jamais
 # dans packages.txt lui-même, qui reste strictement pacman officiel (sur quoi
 # repose le check verify "paquets manquants").
-AUR_PACKAGES=(worktrunk-bin)
+AUR_PACKAGES=(worktrunk-bin tuios-bin)
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 RC_D="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/rc.d"
 # couche privée (hôtes internes…) : dépôt git séparé, jamais publié — voir sync_private
