@@ -38,6 +38,7 @@ mise run bootstrap                               # git pull + bootstrap pour de 
 mise run bootstrap -- --no-tailscale             # sans rejoindre la tailnet
 mise run bootstrap -- --with-socks5             # + proxy SOCKS5 sur l'IP tailnet (port 1080)
 mise run socks5-test [hôte] [port]               # teste ce proxy (défaut : ce nœud, 1080)
+mise run bootstrap -- --with-socks5-local       # + proxy SOCKS5 sur 127.0.0.1 → tailnet (Mac sous OrbStack)
 mise run bootstrap -- --with-livesync-relay https://<nœud>.<tailnet>.ts.net   # + relais LiveSync (localhost:5984)
 mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude (-n : dry-run)
 mise run packages [-- -n]                        # installe packages.txt sur ce poste (sans pull)
@@ -273,6 +274,18 @@ intact.
   actif, le port est ouvert **sur `tailscale0` uniquement**. Pas d'auth côté
   proxy : restreindre qui peut l'utiliser via l'ACL Tailscale (`tcp:1080`).
   Client : `socks5://<hôte>:1080`. Sans le flag, rien n'est touché.
+- 🧦 **Proxy SOCKS5 local (opt-in)** : `--with-socks5-local [port]` (1080 par
+  défaut, ou `DEVBOX_SOCKS5_LOCAL_PORT`) — le sens inverse, pour un hôte **hors
+  tailnet** qui héberge ce nœud (Mac → VM OrbStack). L'unité
+  `devbox-socks5-local.service` (microsocks) écoute sur **`127.0.0.1`** ;
+  OrbStack la publie sur `localhost` du Mac, la tailnet ne la voit pas. Le
+  navigateur du Mac atteint alors les services web tailnet-only
+  (`http://mini:8080`, `https://<nœud>.<tailnet>.ts.net`…). Côté Mac :
+  `socks5://localhost:1080` **avec le DNS délégué au proxy** (Firefox :
+  « Proxy DNS when using SOCKS v5 ») pour que MagicDNS résolve les noms.
+  Pour ne proxifier que la tailnet, un PAC :
+  `if (dnsDomainIs(host, ".ts.net") || isInNet(host, "100.64.0.0", "255.192.0.0") || isPlainHostName(host)) return "SOCKS5 localhost:1080"; return "DIRECT";`.
+  Sans le flag, rien n'est touché.
 - 📓 **Relais Obsidian LiveSync (opt-in)** : `--with-livesync-relay <url> [port]`
   pour un hôte **hors tailnet** qui héberge ce nœud (Mac → VM OrbStack).
   L'unité `devbox-livesync-relay.service` (socat) écoute en HTTP sur
