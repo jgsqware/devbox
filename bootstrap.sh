@@ -70,6 +70,8 @@ WITH_SOCKS5=0                                         # opt-in — --with-socks5
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
 WITH_SOCKS5_LOCAL=0                                   # opt-in — --with-socks5-local : proxy SOCKS5 sur 127.0.0.1 → tailnet (Mac sous OrbStack)
 SOCKS5_LOCAL_PORT="${DEVBOX_SOCKS5_LOCAL_PORT:-1080}"
+SOCKS5_RELAY_UPSTREAM=""                              # opt-in — --with-socks5-relay <hôte:port> : relais TCP 127.0.0.1 → SOCKS5 distant (Mac sous OrbStack)
+SOCKS5_RELAY_PORT="${DEVBOX_SOCKS5_RELAY_PORT:-1081}"
 LIVESYNC_URL=""                                       # opt-in — --with-livesync-relay <https://…> (relais Obsidian LiveSync)
 LIVESYNC_PORT="${DEVBOX_LIVESYNC_PORT:-5984}"
 SUDO_NOPASSWD=0
@@ -203,6 +205,10 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
                         proxy SOCKS5 sur 127.0.0.1:<port> (1080 par défaut) pour
                         joindre la tailnet depuis un hôte hors tailnet (navigateur
                         du Mac sous OrbStack) — désactivé par défaut
+  --with-socks5-relay <hôte:port> [port]
+                        relais TCP 127.0.0.1:<port> (1081 par défaut) ──▶ un proxy
+                        SOCKS5 d'un autre nœud tailnet (ex. iba…ts.net:1080), pour
+                        le navigateur du Mac sous OrbStack — désactivé par défaut
   --with-livesync-relay <url> [port]
                         relais Obsidian LiveSync : http://127.0.0.1:<port> (5984
                         par défaut) ──TLS──▶ <url> (https://…ts.net) — pour un
@@ -236,6 +242,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
             (+ proxy SOCKS5 sur 127.0.0.1 avec --with-socks5-local)
+            (+ relais SOCKS5 sur 127.0.0.1 avec --with-socks5-relay)
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
@@ -262,6 +269,8 @@ while [[ $# -gt 0 ]]; do
                       if [[ "${2:-}" =~ ^[0-9]+$ ]]; then SOCKS5_PORT="$2"; shift 2; else shift; fi ;;
     --with-socks5-local) WITH_SOCKS5_LOCAL=1
                       if [[ "${2:-}" =~ ^[0-9]+$ ]]; then SOCKS5_LOCAL_PORT="$2"; shift 2; else shift; fi ;;
+    --with-socks5-relay) SOCKS5_RELAY_UPSTREAM="${2:-}"
+                      if [[ "${3:-}" =~ ^[0-9]+$ ]]; then SOCKS5_RELAY_PORT="$3"; shift 3; else shift 2; fi ;;
     --with-livesync-relay) LIVESYNC_URL="${2:-}"
                       if [[ "${3:-}" =~ ^[0-9]+$ ]]; then LIVESYNC_PORT="$3"; shift 3; else shift 2; fi ;;
     --theme)          THEME="$2"; shift 2 ;;
@@ -288,6 +297,7 @@ passthru() {
   (( WITH_TAILSCALE )) || a+=(--no-tailscale)
   (( WITH_SOCKS5 ))    && a+=(--with-socks5 "$SOCKS5_PORT")
   (( WITH_SOCKS5_LOCAL )) && a+=(--with-socks5-local "$SOCKS5_LOCAL_PORT")
+  [[ -n "$SOCKS5_RELAY_UPSTREAM" ]] && a+=(--with-socks5-relay "$SOCKS5_RELAY_UPSTREAM" "$SOCKS5_RELAY_PORT")
   [[ -n "$LIVESYNC_URL" ]] && a+=(--with-livesync-relay "$LIVESYNC_URL" "$LIVESYNC_PORT")
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
@@ -1351,6 +1361,50 @@ WantedBy=multi-user.target"
   ok "proxy SOCKS5 local actif : navigateur du Mac → socks5://localhost:$SOCKS5_LOCAL_PORT (DNS via le proxy)"
 }
 
+# relais SOCKS5 opt-in (--with-socks5-relay <hôte:port>) : pour un hôte qui
+# n'est PAS sur la tailnet mais héberge ce nœud (Mac → VM OrbStack) et veut
+# le proxy SOCKS5 d'un AUTRE nœud tailnet (ex. iba, qui sort sur un réseau
+# privé). Chrome ne sait pas chaîner deux proxies : socat relaie donc en TCP
+# brut 127.0.0.1:<port> → <hôte:port> — OrbStack le publie sur localhost du
+# Mac — et le navigateur parle SOCKS5 directement au proxy distant, qui résout
+# lui-même les noms (DNS du réseau privé). Un PAC côté navigateur répartit
+# entre ce relais et --with-socks5-local. Sans le flag, rien n'est touché.
+SOCKS5_RELAY_UNIT=devbox-socks5-relay.service
+setup_socks5_relay() {
+  [[ -n "$SOCKS5_RELAY_UPSTREAM" ]] || return 0
+  [[ "$SOCKS5_RELAY_UPSTREAM" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] \
+    || die "--with-socks5-relay : hôte:port attendu, pas « $SOCKS5_RELAY_UPSTREAM »"
+  [[ "$SOCKS5_RELAY_PORT" =~ ^[0-9]+$ ]] && (( SOCKS5_RELAY_PORT >= 1 && SOCKS5_RELAY_PORT <= 65535 )) \
+    || die "--with-socks5-relay : port invalide « $SOCKS5_RELAY_PORT »"
+  has socat || asroot pacman -S --needed --noconfirm socat
+  local unit="[Unit]
+Description=devbox — relais SOCKS5 127.0.0.1:$SOCKS5_RELAY_PORT -> $SOCKS5_RELAY_UPSTREAM
+After=tailscaled.service network-online.target
+Wants=tailscaled.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:$SOCKS5_RELAY_PORT,bind=127.0.0.1,fork,reuseaddr TCP:$SOCKS5_RELAY_UPSTREAM
+Restart=always
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target"
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait /etc/systemd/system/$SOCKS5_RELAY_UNIT (127.0.0.1:$SOCKS5_RELAY_PORT -> $SOCKS5_RELAY_UPSTREAM)"
+  elif [[ "$(cat "/etc/systemd/system/$SOCKS5_RELAY_UNIT" 2>/dev/null)" != "$unit" ]]; then
+    printf '%s\n' "$unit" | asroot tee "/etc/systemd/system/$SOCKS5_RELAY_UNIT" >/dev/null
+    asroot systemctl daemon-reload
+    asroot systemctl restart "$SOCKS5_RELAY_UNIT"
+  fi
+  asroot systemctl enable --now "$SOCKS5_RELAY_UNIT"
+  ok "relais SOCKS5 actif : navigateur du Mac → socks5://localhost:$SOCKS5_RELAY_PORT (→ $SOCKS5_RELAY_UPSTREAM)"
+}
+
 # relais Obsidian LiveSync opt-in (--with-livesync-relay <url>) : pour un hôte
 # qui n'est PAS sur la tailnet mais héberge ce nœud (Mac → VM OrbStack). socat
 # écoute en HTTP sur 127.0.0.1 — OrbStack le publie sur localhost du Mac, la
@@ -1446,6 +1500,7 @@ do_tailscale() {
   open_mosh_ufw
   setup_socks5
   setup_socks5_local
+  setup_socks5_relay
   setup_livesync_relay
 }
 
@@ -1653,6 +1708,8 @@ do_verify() {
     check "proxy SOCKS5 (tailnet)" "systemctl is-active --quiet $SOCKS5_UNIT && grep -o -- '-i [^ ]* -p [0-9]*' /etc/systemd/system/$SOCKS5_UNIT"
   (( WITH_SOCKS5_LOCAL )) || systemctl is-enabled --quiet "$SOCKS5_LOCAL_UNIT" 2>/dev/null && \
     check "proxy SOCKS5 (local)" "systemctl is-active --quiet $SOCKS5_LOCAL_UNIT && grep -o -- '-i [^ ]* -p [0-9]*' /etc/systemd/system/$SOCKS5_LOCAL_UNIT"
+  [[ -n "$SOCKS5_RELAY_UPSTREAM" ]] || systemctl is-enabled --quiet "$SOCKS5_RELAY_UNIT" 2>/dev/null && \
+    check "relais SOCKS5" "systemctl is-active --quiet $SOCKS5_RELAY_UNIT && grep -o -- '-> .*' /etc/systemd/system/$SOCKS5_RELAY_UNIT"
   [[ -n "$LIVESYNC_URL" ]] || systemctl is-enabled --quiet "$LIVESYNC_UNIT" 2>/dev/null && \
     check "relais LiveSync" "systemctl is-active --quiet $LIVESYNC_UNIT && grep -o -- '-> .*' /etc/systemd/system/$LIVESYNC_UNIT"
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"

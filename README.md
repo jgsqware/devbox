@@ -39,6 +39,7 @@ mise run bootstrap -- --no-tailscale             # sans rejoindre la tailnet
 mise run bootstrap -- --with-socks5             # + proxy SOCKS5 sur l'IP tailnet (port 1080)
 mise run socks5-test [hôte] [port]               # teste ce proxy (défaut : ce nœud, 1080)
 mise run bootstrap -- --with-socks5-local       # + proxy SOCKS5 sur 127.0.0.1 → tailnet (Mac sous OrbStack)
+mise run bootstrap -- --with-socks5-relay iba.<tailnet>.ts.net:1080   # + relais vers le SOCKS5 d'un autre nœud (localhost:1081)
 mise run bootstrap -- --with-livesync-relay https://<nœud>.<tailnet>.ts.net   # + relais LiveSync (localhost:5984)
 mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude (-n : dry-run)
 mise run packages [-- -n]                        # installe packages.txt sur ce poste (sans pull)
@@ -285,6 +286,20 @@ intact.
   « Proxy DNS when using SOCKS v5 ») pour que MagicDNS résolve les noms.
   Pour ne proxifier que la tailnet, un PAC :
   `if (dnsDomainIs(host, ".ts.net") || isInNet(host, "100.64.0.0", "255.192.0.0") || isPlainHostName(host)) return "SOCKS5 localhost:1080"; return "DIRECT";`.
+  Sans le flag, rien n'est touché.
+- 🔀 **Relais SOCKS5 (opt-in)** : `--with-socks5-relay <hôte:port> [port]`
+  pour joindre depuis le Mac le proxy SOCKS5 d'un **autre** nœud tailnet
+  (ex. `iba`, qui sort sur le réseau IBA). Chrome ne chaîne pas deux
+  proxies : l'unité `devbox-socks5-relay.service` (socat) relaie en TCP brut
+  **`127.0.0.1:1081`** (ou `DEVBOX_SOCKS5_RELAY_PORT`) → `<hôte:port>`, et le
+  navigateur parle SOCKS5 directement au proxy distant, qui résout les noms
+  du réseau privé. Côté Mac, une session Chrome séparée avec un PAC qui
+  répartit entre ce relais et `--with-socks5-local` — rien d'autre à changer :
+  ```bash
+  pac='function FindProxyForURL(u,h){if(dnsDomainIs(h,".goiba.net"))return "SOCKS5 localhost:1081";return "SOCKS5 localhost:1080";}'
+  open -na "Google Chrome" --args --user-data-dir="$HOME/.chrome-iba" \
+    --proxy-pac-url="data:application/x-javascript-config;base64,$(printf %s "$pac" | base64)"
+  ```
   Sans le flag, rien n'est touché.
 - 📓 **Relais Obsidian LiveSync (opt-in)** : `--with-livesync-relay <url> [port]`
   pour un hôte **hors tailnet** qui héberge ce nœud (Mac → VM OrbStack).
