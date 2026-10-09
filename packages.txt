@@ -37,6 +37,7 @@ lua51
 luarocks
 glab
 github-cli            # binaire gh — GitHub CLI
+claude-desktop
 
 # --- éditeur -------------------------------------------------------------
 neovim
