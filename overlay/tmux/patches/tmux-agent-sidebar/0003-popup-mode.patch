@@ -1,0 +1,174 @@
+diff --git i/src/app.rs w/src/app.rs
+index a3c4ced..83a00fc 100644
+--- i/src/app.rs
++++ w/src/app.rs
+@@ -48,6 +48,9 @@ pub fn run(
+     let mut needs_redraw = true;
+ 
+     loop {
++        if crate::POPUP_QUIT.load(Ordering::Relaxed) {
++            return Ok(());
++        }
+         if needs_redraw {
+             render::render_frame(terminal, &mut state)?;
+             needs_redraw = false;
+diff --git i/src/app/input.rs w/src/app/input.rs
+index 27a1532..87e75e8 100644
+--- i/src/app/input.rs
++++ w/src/app/input.rs
+@@ -112,8 +112,11 @@ pub(super) fn handle_key_event(
+                 || state.focus_state.focus == Focus::Filter
+             {
+                 state.focus_state.focus = Focus::Panes;
++            } else {
++                crate::request_popup_quit();
+             }
+         }
++        KeyCode::Char('q') if crate::popup_mode() => crate::request_popup_quit(),
+         KeyCode::Char('j') | KeyCode::Down => pane_nav_down(state),
+         KeyCode::Char('n') if ctrl => pane_nav_down(state),
+         KeyCode::Char('k') | KeyCode::Up => pane_nav_up(state),
+diff --git i/src/lib.rs w/src/lib.rs
+index a161df1..f25c331 100644
+--- i/src/lib.rs
++++ w/src/lib.rs
+@@ -21,3 +21,19 @@ pub mod worktree;
+ pub const SPINNER_ICON: &str = "●";
+ pub const SPINNER_PULSE: &[u8] = &[82, 78, 114, 150, 186, 150, 114, 78];
+ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
++
++/// Popup mode: the list runs in a `display-popup` (env `AGENT_SIDEBAR_POPUP=1`)
++/// instead of a permanent sidebar pane. Enter jumps then quits, Esc quits.
++pub fn popup_mode() -> bool {
++    std::env::var("AGENT_SIDEBAR_POPUP").is_ok_and(|v| v == "1")
++}
++
++/// Set by the input handler in popup mode; the main loop exits on it.
++pub static POPUP_QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
++/// Ask the popup to close (no-op outside popup mode).
++pub fn request_popup_quit() {
++    if popup_mode() {
++        POPUP_QUIT.store(true, std::sync::atomic::Ordering::Relaxed);
++    }
++}
+diff --git i/src/main.rs w/src/main.rs
+index 3dd4b7b..5e05f65 100644
+--- i/src/main.rs
++++ w/src/main.rs
+@@ -58,16 +58,19 @@ fn main() -> io::Result<()> {
+     }
+ 
+     let pid = std::process::id();
+-    let _ = std::process::Command::new("tmux")
+-        .args([
+-            "set",
+-            "-t",
+-            &tmux_pane,
+-            "-p",
+-            tmux::SIDEBAR_PID,
+-            &pid.to_string(),
+-        ])
+-        .output();
++    // In popup mode TMUX_PANE is the user's pane, not ours: leave it untouched.
++    if !tmux_agent_sidebar::popup_mode() {
++        let _ = std::process::Command::new("tmux")
++            .args([
++                "set",
++                "-t",
++                &tmux_pane,
++                "-p",
++                tmux::SIDEBAR_PID,
++                &pid.to_string(),
++            ])
++            .output();
++    }
+ 
+     let mut stdout = io::stdout();
+     let _tui_session = TuiSession::enter(&mut stdout)?;
+diff --git i/src/state/focus.rs w/src/state/focus.rs
+index a980326..9c9f15a 100644
+--- i/src/state/focus.rs
++++ w/src/state/focus.rs
+@@ -92,6 +92,10 @@ impl AppState {
+             // periodic tmux refresh.
+             self.focus_state.focused_pane_id = Some(target_pane_id.clone());
+             tmux::select_pane(&target_pane_id);
++            if crate::popup_mode() {
++                crate::request_popup_quit();
++                return;
++            }
+ 
+             // The jump may land on a window that has no sidebar of its own
+             // (e.g. with @sidebar_auto_create off). Summon one there so the
+diff --git i/src/tmux/commands.rs w/src/tmux/commands.rs
+index 9e30a99..218017b 100644
+--- i/src/tmux/commands.rs
++++ w/src/tmux/commands.rs
+@@ -98,7 +98,15 @@ pub fn select_pane(pane_id: &str) {
+     // Find the session containing this pane and switch to it first
+     let session_id = display_message(pane_id, "#{session_id}");
+     if !session_id.is_empty() {
+-        let _ = run_tmux(&["switch-client", "-t", &session_id]);
++        // From a popup, target the client that opened it, not tmux's guess.
++        match std::env::var("AGENT_SIDEBAR_CLIENT") {
++            Ok(client) if !client.is_empty() => {
++                let _ = run_tmux(&["switch-client", "-c", &client, "-t", &session_id]);
++            }
++            _ => {
++                let _ = run_tmux(&["switch-client", "-t", &session_id]);
++            }
++        }
+     }
+     // Then switch to the correct window
+     let window_id = display_message(pane_id, "#{window_id}");
+diff --git i/src/tmux/query.rs w/src/tmux/query.rs
+index 184929b..047f7ff 100644
+--- i/src/tmux/query.rs
++++ w/src/tmux/query.rs
+@@ -120,7 +120,10 @@ fn clean_pane_title(raw: &str, hosts: &[&str]) -> String {
+         _ => raw,
+     }
+     .trim();
+-    if title.is_empty() || title == "Claude Code" || hosts.iter().any(|h| !h.is_empty() && *h == title) {
++    if title.is_empty()
++        || title == "Claude Code"
++        || hosts.iter().any(|h| !h.is_empty() && *h == title)
++    {
+         return String::new();
+     }
+     title.to_string()
+@@ -369,7 +372,10 @@ fn parse_pane_fields_with_processes(
+             let field = |i: usize| parts.get(i).map(String::as_str).unwrap_or("");
+             clean_pane_title(
+                 field(pane_line_field::PANE_TITLE),
+-                &[field(pane_line_field::HOST), field(pane_line_field::HOST_SHORT)],
++                &[
++                    field(pane_line_field::HOST),
++                    field(pane_line_field::HOST_SHORT),
++                ],
+             )
+         },
+         sidebar_spawned: parts[pane_line_field::SIDEBAR_SPAWNED] == "1",
+@@ -1356,13 +1362,19 @@ mod pane_title_tests {
+ 
+     #[test]
+     fn strips_status_glyph() {
+-        assert_eq!(clean_pane_title("✳ Tmux session aliases", HOSTS), "Tmux session aliases");
++        assert_eq!(
++            clean_pane_title("✳ Tmux session aliases", HOSTS),
++            "Tmux session aliases"
++        );
+         assert_eq!(clean_pane_title("⠂ Fix the build", HOSTS), "Fix the build");
+     }
+ 
+     #[test]
+     fn keeps_title_without_glyph() {
+-        assert_eq!(clean_pane_title("Tmux session aliases pour zshrc", HOSTS), "Tmux session aliases pour zshrc");
++        assert_eq!(
++            clean_pane_title("Tmux session aliases pour zshrc", HOSTS),
++            "Tmux session aliases pour zshrc"
++        );
+     }
+ 
+     #[test]

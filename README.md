@@ -162,9 +162,10 @@ seule ligne qui charge `overlay/tmux/devbox.conf` (→ `~/.config/tmux/devbox.co
 Elle installe aussi [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar)
 sans TPM (clone dans `~/.tmux/plugins/` + binaire de release) ; ses hooks
 Claude Code viennent du plugin Claude `tmux-agent-sidebar@hiroppy` (étape
-`claude-plugins`). `prefix+e` : volet dans la fenêtre, `prefix+E` : partout.
+`claude-plugins`). **`prefix+a` : liste en popup** (Entrée saute et ferme, Esc/q ferme) ;
+`prefix+e` / `prefix+E` : volet permanent dans la fenêtre / partout (plus créé d'office).
 Patchs locaux dans `overlay/tmux/patches/tmux-agent-sidebar/` (libellé stable =
-titre de la conversation Claude) : appliqués puis compilés avec `cargo` ; sans
+titre de la conversation Claude, mode popup) : appliqués puis compilés avec `cargo` ; sans
 `cargo`, binaire de release. À supprimer dès qu'ils sont intégrés en amont.
 Fonctions shell `ta` / `trs` : `rc.d/50-tmux.sh`.
 
