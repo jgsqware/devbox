@@ -157,6 +157,14 @@ Les configs copiées depuis le dépôt : `starship.toml` `tmux.conf`
 `lazygit/config.yml` `btop.conf` `git/config`. Ajouter une cible = une ligne
 dans `DOTCONFIGS` (dans `bootstrap.sh`).
 
+**tmux** : `tmux.conf` reste celui d'Omarchy ; l'étape `tmux` y ajoute une
+seule ligne qui charge `overlay/tmux/devbox.conf` (→ `~/.config/tmux/devbox.conf`).
+Elle installe aussi [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar)
+sans TPM (clone dans `~/.tmux/plugins/` + binaire de release) ; ses hooks
+Claude Code viennent du plugin Claude `tmux-agent-sidebar@hiroppy` (étape
+`claude-plugins`). `prefix+e` : volet dans la fenêtre, `prefix+E` : partout.
+Fonctions shell `ta` / `trs` : `rc.d/50-tmux.sh`.
+
 ## Override bash
 
 `~/.bashrc` ne contient **qu'un loader** qui ne bouge plus jamais :

@@ -54,7 +54,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -64,7 +64,7 @@ OMARCHY_WHY=""
 # moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
 OMARCHY_PROTECTED=(locale skel vendor shell theme)
 # rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
-OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 90-private.sh)
+OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 50-tmux.sh 90-private.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
@@ -226,7 +226,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -238,6 +238,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   skel      cp -af /etc/skel/. ~/   (sauvegarde préalable)
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
   shell     ~/.bashrc + rc.d (+ couche privée) + prompt starship & configs du dépôt omarchy + identité git
+  tmux      plugin tmux-agent-sidebar (clone + binaire) + overlay ~/.config/tmux/devbox.conf
   theme     omarchy-theme-set en headless + câblage nvim/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
@@ -245,7 +246,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ relais SOCKS5 sur 127.0.0.1 avec --with-socks5-relay)
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
-  claude-plugins  plugins Claude Code en scope user (adhd) + bloc géré dans ~/.claude/CLAUDE.md
+  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1196,6 +1197,61 @@ do_shell() {
   fi
 }
 
+# =============================================================== ⑦b tmux ====
+# tmux.conf vient d'Omarchy (recopié par l'étape shell à chaque passage) : on
+# n'y ajoute qu'UNE ligne, qui charge notre overlay ~/.config/tmux/devbox.conf.
+# Plugin tmux-agent-sidebar en install manuelle (pas de TPM) : clone + binaire
+# de release, retéléchargé quand la version du Cargo.toml change. Les hooks
+# Claude Code viennent du plugin Claude (étape claude-plugins), dont hook.sh
+# retombe sur le binaire posé ici.
+SIDEBAR_REPO="https://github.com/hiroppy/tmux-agent-sidebar.git"
+SIDEBAR_DIR="$HOME/.tmux/plugins/tmux-agent-sidebar"
+do_tmux() {
+  step "⑦b" "tmux : overlay devbox.conf + plugin tmux-agent-sidebar"
+  has tmux || { skip "tmux absent — étape sautée"; return 0; }
+
+  # plugin : clone ou mise à jour
+  if [[ -d "$SIDEBAR_DIR/.git" ]]; then
+    run git -C "$SIDEBAR_DIR" pull -q --ff-only \
+      || warn "tmux-agent-sidebar : mise à jour impossible — version actuelle conservée"
+  else
+    run mkdir -p "${SIDEBAR_DIR%/*}"
+    run git clone -q --depth 1 "$SIDEBAR_REPO" "$SIDEBAR_DIR" \
+      || { warn "clone de $SIDEBAR_REPO impossible — plugin sauté"; return 0; }
+  fi
+
+  # binaire : release GitHub pour cet ARCH, si absent ou d'une autre version
+  local bin="$SIDEBAR_DIR/bin/tmux-agent-sidebar" want have arch
+  want="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$SIDEBAR_DIR/Cargo.toml" 2>/dev/null)"
+  have="$("$bin" version 2>/dev/null || true)"
+  case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) arch="" ;; esac
+  if [[ -n "$want" && "$have" == "$want" ]]; then
+    ok "tmux-agent-sidebar $have déjà installé"
+  elif [[ -z "$arch" ]]; then
+    warn "tmux-agent-sidebar : pas de binaire pour $(uname -m) — cargo build --release dans $SIDEBAR_DIR"
+  elif runsh "mkdir -p '${bin%/*}' && curl -fsSL 'https://github.com/hiroppy/tmux-agent-sidebar/releases/download/v$want/tmux-agent-sidebar-linux-$arch' -o '$bin.tmp' && chmod +x '$bin.tmp' && mv '$bin.tmp' '$bin'"; then
+    ok "tmux-agent-sidebar $want installé → $bin"
+  else
+    warn "téléchargement du binaire tmux-agent-sidebar $want échoué — le plugin lancera son assistant au démarrage de tmux"
+  fi
+
+  # overlay + ligne de chargement dans tmux.conf
+  local conf="$HOME/.config/tmux/tmux.conf" line="source-file -q ~/.config/tmux/devbox.conf"
+  run mkdir -p "$HOME/.config/tmux"
+  run cp -af "$OVERLAY_DIR/tmux/devbox.conf" "$HOME/.config/tmux/devbox.conf"
+  if grep -qxF "$line" "$conf" 2>/dev/null; then
+    ok "devbox.conf déjà chargé par tmux.conf"
+  else
+    runsh "printf '\n# devbox (géré par bootstrap.sh)\n%s\n' '$line' >> '$conf'"
+    ok "devbox.conf chargé depuis $conf"
+  fi
+
+  # serveur tmux vivant : recharge pour prendre le plugin sans redémarrer
+  if ! (( DRY_RUN )) && tmux info >/dev/null 2>&1; then
+    tmux source-file "$conf" >/dev/null 2>&1 && ok "config rechargée dans le serveur tmux actif"
+  fi
+}
+
 # ============================================================== ⑧ thème =====
 do_theme() {
   step "⑧" "Thème headless : $THEME"
@@ -1559,7 +1615,7 @@ do_claude_plugins() {
   has claude || { skip "claude absent — plugins sautés"; return 0; }
   # Format : "<plugin>@<marketplace> <source github>"
   local p id mkt src
-  for p in "adhd@adhd UditAkhourii/adhd"; do
+  for p in "adhd@adhd UditAkhourii/adhd" "tmux-agent-sidebar@hiroppy hiroppy/tmux-agent-sidebar"; do
     read -r id src <<<"$p"; mkt="${id#*@}"
     if (( DRY_RUN )); then
       info "claude plugin install $id (dry-run, non exécuté)"
@@ -1725,6 +1781,8 @@ do_verify() {
   has gh     && check "gh authentifié"    "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
+  has tmux   && check "tmux-agent-sidebar"  "\"\$HOME/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar\" version && grep -qxF 'source-file -q ~/.config/tmux/devbox.conf' \"\$HOME/.config/tmux/tmux.conf\""
+  has claude && check "plugin claude tmux-agent-sidebar" "claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
   printf '\n'
@@ -1774,6 +1832,7 @@ main() {
       skel)      do_skel ;;
       vendor)    do_vendor ;;
       shell)     do_shell ;;
+      tmux)      do_tmux ;;
       theme)     do_theme ;;
       tailscale) do_tailscale ;;
       cli-auth)  do_cli_auth ;;
