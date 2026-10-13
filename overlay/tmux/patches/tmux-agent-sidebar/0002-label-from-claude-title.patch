@@ -106,54 +106,69 @@ index 4a669b7..9842343 100644
              bg_shell_cmd: None,
          }
 diff --git i/src/tmux/query.rs w/src/tmux/query.rs
-index ab27d3c..ee9076c 100644
+index ab27d3c..184929b 100644
 --- i/src/tmux/query.rs
 +++ w/src/tmux/query.rs
-@@ -57,6 +57,9 @@ pub(super) mod pane_line_field {
+@@ -57,6 +57,13 @@ pub(super) mod pane_line_field {
      pub const SESSION_ID: usize = 19; // absolute 25 (@pane_session_id)
      pub const SIDEBAR_SPAWNED: usize = 20; // absolute 26 (@agent-sidebar-spawned)
      pub const BG_CMD: usize = 21; // absolute 27 (@pane_bg_cmd)
 +    /// Optional trailing field (absolute 28, `pane_title`): read with
 +    /// `parts.get` so fixtures without it keep parsing.
 +    pub const PANE_TITLE: usize = 22;
++    /// Optional trailing fields (`host`, `host_short`): tmux's default
++    /// pane title, so a title equal to either is not a conversation title.
++    pub const HOST: usize = 23;
++    pub const HOST_SHORT: usize = 24;
      /// Minimum number of fields the pane-line suffix must contain.
      /// Equals `session_line_field::MIN_FIELDS - PANE_LINE_OFFSET`.
      pub const MIN_FIELDS: usize = 22;
-@@ -95,10 +98,25 @@ fn pane_format() -> String {
+@@ -95,10 +102,30 @@ fn pane_format() -> String {
          q(PANE_SESSION_ID),
          q(SPAWNED_OPTION),
          q(PANE_BG_CMD),
 +        q("pane_title"),
++        q("host"),
++        q("host_short"),
      ]
      .join("|")
  }
  
-+/// Claude Code titles its terminal `<glyph> <conversation title>`, the
-+/// glyph being `✳` when idle or a braille spinner while working. Keep the
-+/// title only when it has that shape, so a default title (hostname, shell)
-+/// never ends up as the label.
-+fn clean_pane_title(raw: &str) -> String {
++/// Claude Code titles its terminal with the conversation title, prefixed
++/// by `✳` when idle or a braille spinner while working (not always). Strip
++/// that glyph, and drop titles that are only tmux's default (the hostname)
++/// or Claude's generic one, so they never end up as the label.
++fn clean_pane_title(raw: &str, hosts: &[&str]) -> String {
 +    let mut chars = raw.chars();
-+    match (chars.next(), chars.next()) {
-+        (Some(glyph), Some(' ')) if !glyph.is_ascii() && !glyph.is_alphanumeric() => {
-+            chars.as_str().trim().to_string()
-+        }
-+        _ => String::new(),
++    let title = match (chars.next(), chars.next()) {
++        (Some(glyph), Some(' ')) if !glyph.is_ascii() && !glyph.is_alphanumeric() => chars.as_str(),
++        _ => raw,
 +    }
++    .trim();
++    if title.is_empty() || title == "Claude Code" || hosts.iter().any(|h| !h.is_empty() && *h == title) {
++        return String::new();
++    }
++    title.to_string()
 +}
 +
  fn q(field: &str) -> String {
      format!("#{{q:{field}}}")
  }
-@@ -338,6 +356,7 @@ fn parse_pane_fields_with_processes(
+@@ -338,6 +365,13 @@ fn parse_pane_fields_with_processes(
          },
          session_id,
          session_name: String::new(),
-+        pane_title: clean_pane_title(parts.get(pane_line_field::PANE_TITLE).map(String::as_str).unwrap_or("")),
++        pane_title: {
++            let field = |i: usize| parts.get(i).map(String::as_str).unwrap_or("");
++            clean_pane_title(
++                field(pane_line_field::PANE_TITLE),
++                &[field(pane_line_field::HOST), field(pane_line_field::HOST_SHORT)],
++            )
++        },
          sidebar_spawned: parts[pane_line_field::SIDEBAR_SPAWNED] == "1",
          bg_shell_cmd: {
              let raw = &parts[pane_line_field::BG_CMD];
-@@ -601,6 +620,7 @@ mod tests {
+@@ -601,6 +635,7 @@ mod tests {
              worktree: WorktreeMetadata::default(),
              session_id: None,
              session_name: String::new(),
@@ -161,7 +176,7 @@ index ab27d3c..ee9076c 100644
              sidebar_spawned: false,
              bg_shell_cmd: None,
          }
-@@ -1187,6 +1207,7 @@ mod tests {
+@@ -1187,6 +1222,7 @@ mod tests {
                      worktree: WorktreeMetadata::default(),
                      session_id: None,
                      session_name: String::new(),
@@ -169,7 +184,7 @@ index ab27d3c..ee9076c 100644
                      sidebar_spawned: false,
                      bg_shell_cmd: None,
                  }],
-@@ -1311,3 +1332,21 @@ mod tests {
+@@ -1311,3 +1347,29 @@ mod tests {
          );
      }
  }
@@ -178,17 +193,25 @@ index ab27d3c..ee9076c 100644
 +mod pane_title_tests {
 +    use super::clean_pane_title;
 +
++    const HOSTS: &[&str] = &["omarchy.lan", "omarchy"];
++
 +    #[test]
-+    fn keeps_claude_title_without_glyph() {
-+        assert_eq!(clean_pane_title("✳ Tmux session aliases"), "Tmux session aliases");
-+        assert_eq!(clean_pane_title("⠂ Fix the build"), "Fix the build");
++    fn strips_status_glyph() {
++        assert_eq!(clean_pane_title("✳ Tmux session aliases", HOSTS), "Tmux session aliases");
++        assert_eq!(clean_pane_title("⠂ Fix the build", HOSTS), "Fix the build");
++    }
++
++    #[test]
++    fn keeps_title_without_glyph() {
++        assert_eq!(clean_pane_title("Tmux session aliases pour zshrc", HOSTS), "Tmux session aliases pour zshrc");
 +    }
 +
 +    #[test]
 +    fn drops_default_titles() {
-+        assert_eq!(clean_pane_title("omarchy"), "");
-+        assert_eq!(clean_pane_title(""), "");
-+        assert_eq!(clean_pane_title("a b"), "");
++        assert_eq!(clean_pane_title("omarchy", HOSTS), "");
++        assert_eq!(clean_pane_title("omarchy.lan", HOSTS), "");
++        assert_eq!(clean_pane_title("✳ Claude Code", HOSTS), "");
++        assert_eq!(clean_pane_title("", HOSTS), "");
 +    }
 +}
 diff --git i/src/tmux/types.rs w/src/tmux/types.rs

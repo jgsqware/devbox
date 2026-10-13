@@ -37,6 +37,7 @@ lua51
 luarocks
 glab
 github-cli            # binaire gh — GitHub CLI
+rust                  # cargo — compile tmux-agent-sidebar patché (overlay/tmux/patches)
 claude-desktop
 
 # --- éditeur -------------------------------------------------------------
