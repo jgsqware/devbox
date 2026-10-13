@@ -702,6 +702,67 @@ install_twg() {
   ok "twg ${cur:+$cur → }$ver installé (sha256 vérifié) — ~/.local/bin/twg, sans config : twg consent / login / skills install à la main"
 }
 
+# Incus (packages.txt) : rien ne marche tant que le démon n'a ni plages
+# subuid/subgid pour root, ni stockage, ni réseau — tout est posé ici,
+# idempotent. Démon activé par socket (lancé au premier appel `incus`).
+setup_incus() {
+  has incus || return 0
+  local me changed=0 f
+  me="$(id -un)"
+  # conteneurs non privilégiés : Arch ne crée pas d'entrée root, et le
+  # démon lit ces fichiers au démarrage (d'où le restart s'il tournait).
+  for f in /etc/subuid /etc/subgid; do
+    grep -q '^root:' "$f" 2>/dev/null && continue
+    asrootsh "echo 'root:1000000:1000000000' >> $f" && changed=1
+  done
+  (( changed )) && info "plages subuid/subgid de root posées (root:1000000:1000000000)"
+  asroot systemctl enable --now incus.socket || { warn "incus.socket non activé"; return 0; }
+  if (( changed )) && systemctl is-active -q incus.service; then
+    asroot systemctl restart incus.service
+  fi
+  if ! getent group incus-admin | grep -qw "$me"; then
+    asroot usermod -aG incus-admin "$me" && info "groupe incus-admin ajouté"
+  fi
+  # même logique que docker : la session garde ses anciens groupes → ACL
+  # sur le socket pour que `incus` marche sans sudo tout de suite.
+  local sock=/var/lib/incus/unix.socket
+  if ! id -nG | tr ' ' '\n' | grep -qx incus-admin; then
+    asroot incus info >/dev/null 2>&1 || true   # réveille le démon → crée le socket
+    if [[ -S "$sock" ]] && has setfacl && asroot setfacl -m "u:$me:rw" "$sock"; then
+      info "session sans le groupe incus-admin — ACL posée sur le socket"
+    else
+      warn "groupe incus-admin effectif seulement après déconnexion/reconnexion (ou : newgrp incus-admin)"
+    fi
+  fi
+  # init minimale (pool « default » en dir + pont incusbr0 NATé) une seule
+  # fois : un pool déjà présent = init faite (à la main ou par un run passé).
+  if (( DRY_RUN )); then
+    info "incus admin init --minimal si aucun pool de stockage (dry-run)"
+  elif [[ -z "$(asroot incus storage list -f csv 2>/dev/null)" ]]; then
+    asroot incus admin init --minimal && ok "incus initialisé (pool default, pont incusbr0)" \
+      || warn "incus admin init --minimal a échoué — à faire à la main"
+  fi
+  # Réseau des conteneurs : la politique FORWARD est DROP dès que ufw est
+  # actif (et docker la met aussi à DROP). Avec ufw, des règles route sur
+  # incusbr0 passent avant la politique ; sans ufw (WSL), seul docker
+  # bloque → ip-forward-no-drop (Docker ≥ 28), effectif au prochain
+  # redémarrage de docker — pas de restart ici, il couperait les conteneurs.
+  if has ufw && asroot ufw status 2>/dev/null | grep -q '^Status: active'; then
+    asroot ufw allow in on incusbr0 comment 'incus dhcp/dns' >/dev/null \
+      && asroot ufw route allow in on incusbr0 comment 'incus sortant' >/dev/null \
+      && asroot ufw route allow out on incusbr0 comment 'incus retour' >/dev/null \
+      && ok "ufw : incusbr0 autorisé (DHCP/DNS + routage)" \
+      || warn "ufw : règles incusbr0 non posées — les conteneurs n'auront pas de réseau"
+  elif has docker && has jq; then
+    local dj=/etc/docker/daemon.json
+    if ! jq -e '."ip-forward-no-drop" == true' "$dj" >/dev/null 2>&1; then
+      asrootsh "tmp=\$(mktemp) && { [ -s $dj ] && cat $dj || echo '{}'; } | jq '. + {\"ip-forward-no-drop\": true}' > \$tmp && install -Dm644 \$tmp $dj && rm -f \$tmp" \
+        && info "docker : ip-forward-no-drop posé (réseau incus OK après redémarrage de docker ou reboot)" \
+        || warn "docker : ip-forward-no-drop non posé — réseau incus coupé tant que docker tourne"
+    fi
+  fi
+}
+
 do_packages() {
   step "③" "Paquets"
   local pkgs=() dropped=() unavailable=() rescued=() provided=() p
@@ -783,6 +844,8 @@ do_packages() {
       fi
     fi
   fi
+
+  setup_incus
 
   # AUR_PACKAGES : exception délibérée au "zéro AUR", jamais via `asroot` —
   # makepkg (derrière yay) refuse de tourner en root, sudo n'est appelé par
@@ -1725,6 +1788,8 @@ do_verify() {
   # connexion — id -nG donnerait un faux ❌ juste après le run qui l'ajoute.
   has docker && check "membre de docker" "getent group docker | grep -qw \"\$(id -un)\" && echo docker"
   has docker && check "docker sans sudo"  "docker info >/dev/null 2>&1 && echo ok"
+  has incus  && check "membre de incus-admin" "getent group incus-admin | grep -qw \"\$(id -un)\" && echo incus-admin"
+  has incus  && check "incus sans sudo"   "incus storage list -f csv 2>/dev/null | grep -q . && echo ok"
   check "sudo fonctionnel"        "sudo -n true 2>/dev/null && echo 'sans mdp' || { sudo -v && echo 'avec mdp'; }"
   is_wsl && check "systemd actif" "systemctl is-system-running | grep -qE 'running|degraded' && systemctl is-system-running"
   is_wsl && check "wsl.conf: user par défaut" "grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf && grep -E '^[[:space:]]*default' /etc/wsl.conf"
