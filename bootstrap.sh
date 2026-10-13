@@ -246,7 +246,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ relais SOCKS5 sur 127.0.0.1 avec --with-socks5-relay)
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
-  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar) + bloc géré dans ~/.claude/CLAUDE.md
+  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1631,6 +1631,21 @@ do_claude_plugins() {
     fi
   done
 
+  # plugins intégrés à Claude Code (marketplace « builtin ») : rien à
+  # installer, juste à activer — absents de `claude plugin list`, on lit
+  # enabledPlugins dans settings.json.
+  for id in cc-plugin-you-should-know@builtin; do
+    if (( DRY_RUN )); then
+      info "claude plugin enable $id (dry-run, non exécuté)"
+    elif grep -q "\"$id\": *true" "$HOME/.claude/settings.json" 2>/dev/null; then
+      ok "plugin claude $id déjà activé"
+    else
+      claude plugin enable "$id" --scope user >/dev/null \
+        && ok "plugin claude $id activé" \
+        || warn "activation du plugin $id échouée — relance à la main : claude plugin enable $id --scope user"
+    fi
+  done
+
   # Consignes globales (~/.claude/CLAUDE.md) : bloc géré entre marqueurs,
   # remplacé à chaque passage ; le reste du fichier n'est jamais touché.
   local md="$HOME/.claude/CLAUDE.md" src_md="$OVERLAY_DIR/claude/CLAUDE.md"
@@ -1782,6 +1797,7 @@ do_verify() {
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
   has tmux   && check "tmux-agent-sidebar"  "\"\$HOME/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar\" version && grep -qxF 'source-file -q ~/.config/tmux/devbox.conf' \"\$HOME/.config/tmux/tmux.conf\""
+  has claude && check "plugin claude you-should-know" "grep -q '\"cc-plugin-you-should-know@builtin\": *true' \"\$HOME/.claude/settings.json\" && echo activé"
   has claude && check "plugin claude tmux-agent-sidebar" "claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
