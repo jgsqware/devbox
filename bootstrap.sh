@@ -1273,8 +1273,10 @@ do_tmux() {
   step "⑦b" "tmux : overlay devbox.conf + plugin tmux-agent-sidebar"
   has tmux || { skip "tmux absent — étape sautée"; return 0; }
 
-  # plugin : clone ou mise à jour
+  # plugin : clone ou mise à jour (les patchs d'un passage précédent sont
+  # d'abord retirés, sinon le pull refuse d'écraser l'arbre modifié)
   if [[ -d "$SIDEBAR_DIR/.git" ]]; then
+    run git -C "$SIDEBAR_DIR" checkout -q -- .
     run git -C "$SIDEBAR_DIR" pull -q --ff-only \
       || warn "tmux-agent-sidebar : mise à jour impossible — version actuelle conservée"
   else
@@ -1283,19 +1285,57 @@ do_tmux() {
       || { warn "clone de $SIDEBAR_REPO impossible — plugin sauté"; return 0; }
   fi
 
-  # binaire : release GitHub pour cet ARCH, si absent ou d'une autre version
   local bin="$SIDEBAR_DIR/bin/tmux-agent-sidebar" want have arch
   want="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$SIDEBAR_DIR/Cargo.toml" 2>/dev/null)"
-  have="$("$bin" version 2>/dev/null || true)"
-  case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) arch="" ;; esac
-  if [[ -n "$want" && "$have" == "$want" ]]; then
-    ok "tmux-agent-sidebar $have déjà installé"
-  elif [[ -z "$arch" ]]; then
-    warn "tmux-agent-sidebar : pas de binaire pour $(uname -m) — cargo build --release dans $SIDEBAR_DIR"
-  elif runsh "mkdir -p '${bin%/*}' && curl -fsSL 'https://github.com/hiroppy/tmux-agent-sidebar/releases/download/v$want/tmux-agent-sidebar-linux-$arch' -o '$bin.tmp' && chmod +x '$bin.tmp' && mv '$bin.tmp' '$bin'"; then
-    ok "tmux-agent-sidebar $want installé → $bin"
-  else
-    warn "téléchargement du binaire tmux-agent-sidebar $want échoué — le plugin lancera son assistant au démarrage de tmux"
+
+  # patchs locaux (overlay/tmux/patches/tmux-agent-sidebar/*.patch) : appliqués
+  # sur le clone puis compilés avec cargo. Un tampon (commit amont + patchs)
+  # évite de recompiler quand rien n'a changé. À retirer dès qu'ils sont
+  # intégrés en amont : un patch qui ne s'applique plus le signale.
+  #   0001 : PR #149, le nom de session ne clignote plus (ticket #112)
+  #   0002 : le libellé reprend le titre de la conversation Claude
+  local patches=("$OVERLAY_DIR"/tmux/patches/tmux-agent-sidebar/*.patch) stamp f
+  [[ -e "${patches[0]}" ]] || patches=()
+  if (( ${#patches[@]} )) && ! (( DRY_RUN )); then
+    stamp="$(git -C "$SIDEBAR_DIR" rev-parse HEAD) $(cat "${patches[@]}" | sha256sum | cut -c1-16)"
+    for f in "${patches[@]}"; do
+      git -C "$SIDEBAR_DIR" apply "$f" \
+        || { warn "patch ${f##*/} ne s'applique plus (intégré en amont ?) — patchs ignorés"; git -C "$SIDEBAR_DIR" checkout -q -- .; patches=(); break; }
+    done
+  fi
+  if (( ${#patches[@]} )) && ! (( DRY_RUN )); then
+    if [[ "$(cat "$bin.patched" 2>/dev/null)" == "$stamp" && -x "$bin" ]]; then
+      ok "tmux-agent-sidebar $want patché déjà installé (${#patches[@]} patchs)"
+      patches=(done)
+    elif ! has cargo; then
+      warn "cargo absent — patchs tmux-agent-sidebar non compilés, binaire de release à la place (pacman -S rust pour les avoir)"
+      git -C "$SIDEBAR_DIR" checkout -q -- .
+      patches=()
+    elif (cd "$SIDEBAR_DIR" && cargo build -q --release 2>&1 | tail -5) \
+         && mkdir -p "${bin%/*}" && cp -f "$SIDEBAR_DIR/target/release/tmux-agent-sidebar" "$bin.tmp" && mv "$bin.tmp" "$bin"; then
+      printf '%s\n' "$stamp" > "$bin.patched"
+      ok "tmux-agent-sidebar $want compilé avec ${#patches[@]} patchs → $bin"
+      patches=(done)
+    else
+      warn "compilation de tmux-agent-sidebar échouée — binaire de release à la place"
+      git -C "$SIDEBAR_DIR" checkout -q -- .
+      patches=()
+    fi
+  fi
+
+  # sinon : binaire de release GitHub pour cet ARCH, si absent ou d'une autre version
+  if (( ! ${#patches[@]} )); then
+    have="$("$bin" version 2>/dev/null || true)"
+    case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) arch="" ;; esac
+    if [[ -n "$want" && "$have" == "$want" && ! -e "$bin.patched" ]]; then
+      ok "tmux-agent-sidebar $have déjà installé"
+    elif [[ -z "$arch" ]]; then
+      warn "tmux-agent-sidebar : pas de binaire pour $(uname -m) — cargo build --release dans $SIDEBAR_DIR"
+    elif runsh "mkdir -p '${bin%/*}' && curl -fsSL 'https://github.com/hiroppy/tmux-agent-sidebar/releases/download/v$want/tmux-agent-sidebar-linux-$arch' -o '$bin.tmp' && chmod +x '$bin.tmp' && mv '$bin.tmp' '$bin' && rm -f '$bin.patched'"; then
+      ok "tmux-agent-sidebar $want installé → $bin"
+    else
+      warn "téléchargement du binaire tmux-agent-sidebar $want échoué — le plugin lancera son assistant au démarrage de tmux"
+    fi
   fi
 
   # overlay + ligne de chargement dans tmux.conf

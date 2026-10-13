@@ -163,6 +163,9 @@ Elle installe aussi [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-s
 sans TPM (clone dans `~/.tmux/plugins/` + binaire de release) ; ses hooks
 Claude Code viennent du plugin Claude `tmux-agent-sidebar@hiroppy` (étape
 `claude-plugins`). `prefix+e` : volet dans la fenêtre, `prefix+E` : partout.
+Patchs locaux dans `overlay/tmux/patches/tmux-agent-sidebar/` (libellé stable =
+titre de la conversation Claude) : appliqués puis compilés avec `cargo` ; sans
+`cargo`, binaire de release. À supprimer dès qu'ils sont intégrés en amont.
 Fonctions shell `ta` / `trs` : `rc.d/50-tmux.sh`.
 
 ## Override bash

@@ -1,0 +1,304 @@
+diff --git i/src/group.rs w/src/group.rs
+index c59096d..d623f3f 100644
+--- i/src/group.rs
++++ w/src/group.rs
+@@ -227,6 +227,7 @@ mod tests {
+             worktree: crate::tmux::WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state.rs w/src/state.rs
+index ce07ddc..f2b47f2 100644
+--- i/src/state.rs
++++ w/src/state.rs
+@@ -222,6 +222,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state/filter.rs w/src/state/filter.rs
+index 19dd96e..ac9f6f4 100644
+--- i/src/state/filter.rs
++++ w/src/state/filter.rs
+@@ -275,6 +275,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state/focus.rs w/src/state/focus.rs
+index 9f0dc88..a980326 100644
+--- i/src/state/focus.rs
++++ w/src/state/focus.rs
+@@ -167,6 +167,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state/pet.rs w/src/state/pet.rs
+index 885fff0..6d2003f 100644
+--- i/src/state/pet.rs
++++ w/src/state/pet.rs
+@@ -232,6 +232,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state/popup.rs w/src/state/popup.rs
+index 13d959c..ba2f456 100644
+--- i/src/state/popup.rs
++++ w/src/state/popup.rs
+@@ -493,6 +493,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state/refresh.rs w/src/state/refresh.rs
+index babb645..7492c42 100644
+--- i/src/state/refresh.rs
++++ w/src/state/refresh.rs
+@@ -180,7 +180,9 @@ impl AppState {
+     fn refresh_session_names(&mut self) {
+         for group in &mut self.repo_groups {
+             for (pane, _) in &mut group.panes {
+-                if let Some(sid) = &pane.session_id
++                if !pane.pane_title.is_empty() {
++                    pane.session_name.clone_from(&pane.pane_title);
++                } else if let Some(sid) = &pane.session_id
+                     && let Some(name) = self.sessions.names.get(sid)
+                 {
+                     pane.session_name.clone_from(name);
+@@ -482,6 +484,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/state/tab.rs w/src/state/tab.rs
+index 4a669b7..9842343 100644
+--- i/src/state/tab.rs
++++ w/src/state/tab.rs
+@@ -186,6 +186,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/tmux/query.rs w/src/tmux/query.rs
+index ab27d3c..ee9076c 100644
+--- i/src/tmux/query.rs
++++ w/src/tmux/query.rs
+@@ -57,6 +57,9 @@ pub(super) mod pane_line_field {
+     pub const SESSION_ID: usize = 19; // absolute 25 (@pane_session_id)
+     pub const SIDEBAR_SPAWNED: usize = 20; // absolute 26 (@agent-sidebar-spawned)
+     pub const BG_CMD: usize = 21; // absolute 27 (@pane_bg_cmd)
++    /// Optional trailing field (absolute 28, `pane_title`): read with
++    /// `parts.get` so fixtures without it keep parsing.
++    pub const PANE_TITLE: usize = 22;
+     /// Minimum number of fields the pane-line suffix must contain.
+     /// Equals `session_line_field::MIN_FIELDS - PANE_LINE_OFFSET`.
+     pub const MIN_FIELDS: usize = 22;
+@@ -95,10 +98,25 @@ fn pane_format() -> String {
+         q(PANE_SESSION_ID),
+         q(SPAWNED_OPTION),
+         q(PANE_BG_CMD),
++        q("pane_title"),
+     ]
+     .join("|")
+ }
+ 
++/// Claude Code titles its terminal `<glyph> <conversation title>`, the
++/// glyph being `✳` when idle or a braille spinner while working. Keep the
++/// title only when it has that shape, so a default title (hostname, shell)
++/// never ends up as the label.
++fn clean_pane_title(raw: &str) -> String {
++    let mut chars = raw.chars();
++    match (chars.next(), chars.next()) {
++        (Some(glyph), Some(' ')) if !glyph.is_ascii() && !glyph.is_alphanumeric() => {
++            chars.as_str().trim().to_string()
++        }
++        _ => String::new(),
++    }
++}
++
+ fn q(field: &str) -> String {
+     format!("#{{q:{field}}}")
+ }
+@@ -338,6 +356,7 @@ fn parse_pane_fields_with_processes(
+         },
+         session_id,
+         session_name: String::new(),
++        pane_title: clean_pane_title(parts.get(pane_line_field::PANE_TITLE).map(String::as_str).unwrap_or("")),
+         sidebar_spawned: parts[pane_line_field::SIDEBAR_SPAWNED] == "1",
+         bg_shell_cmd: {
+             let raw = &parts[pane_line_field::BG_CMD];
+@@ -601,6 +620,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+@@ -1187,6 +1207,7 @@ mod tests {
+                     worktree: WorktreeMetadata::default(),
+                     session_id: None,
+                     session_name: String::new(),
++                    pane_title: String::new(),
+                     sidebar_spawned: false,
+                     bg_shell_cmd: None,
+                 }],
+@@ -1311,3 +1332,21 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod pane_title_tests {
++    use super::clean_pane_title;
++
++    #[test]
++    fn keeps_claude_title_without_glyph() {
++        assert_eq!(clean_pane_title("✳ Tmux session aliases"), "Tmux session aliases");
++        assert_eq!(clean_pane_title("⠂ Fix the build"), "Fix the build");
++    }
++
++    #[test]
++    fn drops_default_titles() {
++        assert_eq!(clean_pane_title("omarchy"), "");
++        assert_eq!(clean_pane_title(""), "");
++        assert_eq!(clean_pane_title("a b"), "");
++    }
++}
+diff --git i/src/tmux/types.rs w/src/tmux/types.rs
+index d515c49..1b162e0 100644
+--- i/src/tmux/types.rs
++++ w/src/tmux/types.rs
+@@ -21,6 +21,10 @@ pub struct PaneInfo {
+     pub worktree: WorktreeMetadata,
+     pub session_id: Option<String>,
+     pub session_name: String,
++    /// Conversation title Claude Code writes to the terminal title
++    /// (`✳ <title>`), leading status glyph stripped. Empty when the pane
++    /// has no agent-set title. Preferred over `session_name` for the label.
++    pub pane_title: String,
+     /// `true` when the window this pane lives in was created by the
+     /// sidebar's spawn flow (via the `@agent-sidebar-spawned` window
+     /// option). Used by the row renderer to show a clickable red `×`
+diff --git i/src/ui/panes/filter_bar.rs w/src/ui/panes/filter_bar.rs
+index 9274bc4..9772259 100644
+--- i/src/ui/panes/filter_bar.rs
++++ w/src/ui/panes/filter_bar.rs
+@@ -247,6 +247,7 @@ mod tests {
+             worktree: crate::tmux::WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         };
+@@ -268,6 +269,7 @@ mod tests {
+             worktree: crate::tmux::WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         };
+diff --git i/src/ui/panes/row.rs w/src/ui/panes/row.rs
+index 9d9fdaf..9723eb1 100644
+--- i/src/ui/panes/row.rs
++++ w/src/ui/panes/row.rs
+@@ -132,6 +132,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/src/ui/panes/row_collector.rs w/src/ui/panes/row_collector.rs
+index dae29bb..bd28a6d 100644
+--- i/src/ui/panes/row_collector.rs
++++ w/src/ui/panes/row_collector.rs
+@@ -173,6 +173,7 @@ mod tests {
+             worktree: WorktreeMetadata::default(),
+             session_id: None,
+             session_name: String::new(),
++            pane_title: String::new(),
+             sidebar_spawned: false,
+             bg_shell_cmd: None,
+         }
+diff --git i/tests/state_tests.rs w/tests/state_tests.rs
+index 79c57b8..99e48ec 100644
+--- i/tests/state_tests.rs
++++ w/tests/state_tests.rs
+@@ -118,6 +118,7 @@ fn test_line_to_row_two_agents() {
+         worktree: WorktreeMetadata::default(),
+         session_id: None,
+         session_name: String::new(),
++        pane_title: String::new(),
+         sidebar_spawned: false,
+         bg_shell_cmd: None,
+     };
+@@ -139,6 +140,7 @@ fn test_line_to_row_two_agents() {
+         worktree: WorktreeMetadata::default(),
+         session_id: None,
+         session_name: String::new(),
++        pane_title: String::new(),
+         sidebar_spawned: false,
+         bg_shell_cmd: None,
+     };
+diff --git i/tests/test_helpers.rs w/tests/test_helpers.rs
+index 40d5434..d39ceea 100644
+--- i/tests/test_helpers.rs
++++ w/tests/test_helpers.rs
+@@ -120,6 +120,7 @@ pub fn make_pane(agent: AgentType, status: PaneStatus) -> PaneInfo {
+         worktree: WorktreeMetadata::default(),
+         session_id: None,
+         session_name: String::new(),
++        pane_title: String::new(),
+         sidebar_spawned: false,
+         bg_shell_cmd: None,
+     }
+diff --git i/tests/ui_snapshot.rs w/tests/ui_snapshot.rs
+index e2006d7..f2a7509 100644
+--- i/tests/ui_snapshot.rs
++++ w/tests/ui_snapshot.rs
+@@ -306,6 +306,7 @@ fn snapshot_two_agents_same_window_ui() {
+         worktree: WorktreeMetadata::default(),
+         session_id: None,
+         session_name: String::new(),
++        pane_title: String::new(),
+         sidebar_spawned: false,
+         bg_shell_cmd: None,
+     };
+@@ -327,6 +328,7 @@ fn snapshot_two_agents_same_window_ui() {
+         worktree: WorktreeMetadata::default(),
+         session_id: None,
+         session_name: String::new(),
++        pane_title: String::new(),
+         sidebar_spawned: false,
+         bg_shell_cmd: None,
+     };
