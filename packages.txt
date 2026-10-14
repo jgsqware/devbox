@@ -50,6 +50,7 @@ zellij
 starship
 btop
 fastfetch
+glow
 
 # --- conteneurs ----------------------------------------------------------
 docker
