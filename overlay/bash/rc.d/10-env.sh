@@ -3,7 +3,6 @@
 
 export OMARCHY_PATH="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
 export OMARCHY_THEME_HEADLESS=1
-export EDITOR=nvim
 
 case ":$PATH:" in
   *":$OMARCHY_PATH/bin:"*) ;;
@@ -16,5 +15,4 @@ case ":$PATH:" in
 esac
 
 # Poste headless : pas de navigateur graphique à lancer.
-# (EDITOR reste omarchy-launch-editor --inline, qui retombe sur nvim.)
 unset BROWSER
