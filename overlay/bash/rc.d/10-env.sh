@@ -3,6 +3,7 @@
 
 export OMARCHY_PATH="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
 export OMARCHY_THEME_HEADLESS=1
+export EDITOR=nvim
 
 case ":$PATH:" in
   *":$OMARCHY_PATH/bin:"*) ;;
