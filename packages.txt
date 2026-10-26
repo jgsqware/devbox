@@ -12,6 +12,7 @@ inetutils
 whois
 socat
 ouch
+superfile
 
 # --- navigation ----------------------------------------------------------
 bat
