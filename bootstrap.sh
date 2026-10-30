@@ -246,7 +246,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ relais SOCKS5 sur 127.0.0.1 avec --with-socks5-relay)
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
-  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + bloc géré dans ~/.claude/CLAUDE.md
+  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1749,6 +1749,23 @@ do_claude_plugins() {
     fi
   done
 
+  # Skills perso (overlay/claude/skills/<nom>/) → ~/.claude/skills/<nom>/,
+  # remplacés à chaque passage. Seuls les skills du dépôt sont touchés : les
+  # autres (twg, synced…) restent tels quels. Éditer dans le dépôt, pas sur l'hôte.
+  local sk name
+  for sk in "$OVERLAY_DIR"/claude/skills/*/; do
+    [[ -f "$sk/SKILL.md" ]] || continue
+    name="${sk%/}"; name="${name##*/}"
+    if diff -rq "$sk" "$HOME/.claude/skills/$name" >/dev/null 2>&1; then
+      ok "skill claude $name déjà à jour"
+    else
+      run mkdir -p "$HOME/.claude/skills"
+      run rm -rf "$HOME/.claude/skills/$name"
+      run cp -a "${sk%/}" "$HOME/.claude/skills/$name"
+      ok "skill claude $name déposé → ~/.claude/skills/$name"
+    fi
+  done
+
   # Consignes globales (~/.claude/CLAUDE.md) : bloc géré entre marqueurs,
   # remplacé à chaque passage ; le reste du fichier n'est jamais touché.
   local md="$HOME/.claude/CLAUDE.md" src_md="$OVERLAY_DIR/claude/CLAUDE.md"
@@ -1903,6 +1920,10 @@ do_verify() {
   has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
   has tmux   && check "tmux-agent-sidebar"  "\"\$HOME/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar\" version && grep -qxF 'source-file -q ~/.config/tmux/devbox.conf' \"\$HOME/.config/tmux/tmux.conf\""
   has claude && check "plugin claude you-should-know" "grep -q '\"cc-plugin-you-should-know@builtin\": *true' \"\$HOME/.claude/settings.json\" && echo activé"
+  for _sk in "$OVERLAY_DIR"/claude/skills/*/; do
+    _sk="${_sk%/}"; _sk="${_sk##*/}"
+    has claude && check "skill claude $_sk" "test -f \"\$HOME/.claude/skills/$_sk/SKILL.md\" && echo présent"
+  done
   has claude && check "plugin claude tmux-agent-sidebar" "claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
