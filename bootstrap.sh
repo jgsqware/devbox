@@ -1670,21 +1670,22 @@ WantedBy=default.target"
   if ! systemctl --user is-active -q "$REX_UNIT"; then
     # un serveur lancé hors unité (`rex server start`, ou autostart d'une
     # commande rex) tient déjà le socket : on ne l'arrête que s'il est vide
-    local st; st="$("$REX_BIN" --autostart=false server status 2>/dev/null)"
+    # status sort en ≠ 0 sans serveur : || true, sinon set -e coupe le bootstrap
+    local st; st="$("$REX_BIN" --autostart=false server status 2>/dev/null || true)"
     if [[ -n "$st" ]]; then
       if grep -q '^sessions: 0$' <<<"$st"; then
-        "$REX_BIN" server stop >/dev/null 2>&1; sleep 1
+        "$REX_BIN" server stop >/dev/null 2>&1 || true; sleep 1
       else
         warn "Rex : un serveur hors unité tourne avec des sessions — laissé en place. Puis : rex server stop && systemctl --user start $REX_UNIT"
-        systemctl --user enable "$REX_UNIT" >/dev/null 2>&1
+        systemctl --user enable "$REX_UNIT" >/dev/null 2>&1 || true
         return 0
       fi
     fi
-    systemctl --user enable --now "$REX_UNIT"
+    systemctl --user enable --now "$REX_UNIT" || warn "Rex : démarrage de $REX_UNIT échoué"
   elif (( changed )); then
     warn "Rex : unité modifiée — redémarrage NON automatique (couperait les sessions). Quand c'est possible : systemctl --user restart $REX_UNIT"
   fi
-  systemctl --user enable -q "$REX_UNIT" 2>/dev/null
+  systemctl --user enable -q "$REX_UNIT" 2>/dev/null || true
   if has ufw && asroot ufw status 2>/dev/null | grep -q '^Status: active'; then
     asroot ufw allow in on tailscale0 to any port "$REX_PORT" proto tcp comment 'rex via tailnet' >/dev/null \
       && ok "ufw : Rex (TCP $REX_PORT) ouvert sur tailscale0" \
