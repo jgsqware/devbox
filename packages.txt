@@ -13,6 +13,7 @@ whois
 socat
 ouch
 superfile
+sshpass
 
 # --- navigation ----------------------------------------------------------
 bat
