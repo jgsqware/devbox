@@ -69,6 +69,7 @@ pacman-contrib
 expac
 yay                   # dépôt [omarchy]
 ffmpeg
+aws-cli-v2
 
 # --- secrets / réseau ----------------------------------------------------
 1password-cli
