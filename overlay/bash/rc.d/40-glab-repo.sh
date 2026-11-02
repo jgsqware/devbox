@@ -45,6 +45,8 @@ _glab_repo_fetch() {
   dir="$(mktemp -d)" || { rm -f "$tmp"; return 1; }
 
   local q='projects?simple=true&archived=false&per_page=100&order_by=last_activity_at&sort=desc'
+  # gitlab.com : sans membership, l'API liste tous les projets publics du site
+  [[ "$host" == gitlab.com ]] && q+='&membership=true'
   pages="$(GITLAB_HOST="$host" glab api -i "$q&page=1" 2>/dev/null \
     | tr -d '\r' | awk -F': ' 'tolower($1)=="x-total-pages"{print $2; exit}')"
   [[ "$pages" =~ ^[0-9]+$ ]] || pages=1
