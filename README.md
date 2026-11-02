@@ -41,7 +41,7 @@ mise run socks5-test [hôte] [port]               # teste ce proxy (défaut : ce
 mise run bootstrap -- --with-socks5-local       # + proxy SOCKS5 sur 127.0.0.1 → tailnet (Mac sous OrbStack)
 mise run bootstrap -- --with-socks5-relay iba.<tailnet>.ts.net:1080   # + relais vers le SOCKS5 d'un autre nœud (localhost:1081)
 mise run bootstrap -- --with-livesync-relay https://<nœud>.<tailnet>.ts.net   # + relais LiveSync (localhost:5984)
-mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude (-n : dry-run)
+mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise, claude, rex (-n : dry-run)
 mise run packages [-- -n]                        # installe packages.txt sur ce poste (sans pull)
 mise run pkg-commit [-- -n]                      # commite packages.txt, message généré depuis le diff
 mise run pkg-add [paquet…] [-s section] [-y] [-n] [--no-sync]   # GLOBAL (de n'importe où) : cherche dépôts+AUR, installe, ajoute, commite, pousse, resync

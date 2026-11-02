@@ -74,6 +74,8 @@ SOCKS5_RELAY_UPSTREAM=""                              # opt-in — --with-socks5
 SOCKS5_RELAY_PORT="${DEVBOX_SOCKS5_RELAY_PORT:-1081}"
 LIVESYNC_URL=""                                       # opt-in — --with-livesync-relay <https://…> (relais Obsidian LiveSync)
 LIVESYNC_PORT="${DEVBOX_LIVESYNC_PORT:-5984}"
+WITH_REX=1                                            # actif par défaut — --no-rex : pas de serveur Rex joignable sur la tailnet
+REX_PORT="${DEVBOX_REX_PORT:-7297}"
 SUDO_NOPASSWD=0
 NO_REEXEC=0
 ROOT_MODE=0
@@ -213,6 +215,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
                         relais Obsidian LiveSync : http://127.0.0.1:<port> (5984
                         par défaut) ──TLS──▶ <url> (https://…ts.net) — pour un
                         hôte hors tailnet (Mac sous OrbStack) — désactivé par défaut
+  --no-rex              pas de serveur Rex (multiplexeur) sur la tailnet — actif
+                        par défaut : http://<nœud>.<tailnet>.ts.net:7297
   --theme <nom>         thème omarchy (défaut: tokyo-night)
   --locales "<a b>"     locales à générer (défaut: "en_US.UTF-8 fr_BE.UTF-8")
   --start-dir <chemin>  répertoire de démarrage sous WSL (défaut: $HOME, 'keep' = off)
@@ -245,6 +249,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ proxy SOCKS5 sur 127.0.0.1 avec --with-socks5-local)
             (+ relais SOCKS5 sur 127.0.0.1 avec --with-socks5-relay)
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
+            (+ serveur Rex sur l'IP tailnet, port 7297 — --no-rex pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
@@ -274,6 +279,7 @@ while [[ $# -gt 0 ]]; do
                       if [[ "${3:-}" =~ ^[0-9]+$ ]]; then SOCKS5_RELAY_PORT="$3"; shift 3; else shift 2; fi ;;
     --with-livesync-relay) LIVESYNC_URL="${2:-}"
                       if [[ "${3:-}" =~ ^[0-9]+$ ]]; then LIVESYNC_PORT="$3"; shift 3; else shift 2; fi ;;
+    --no-rex)         WITH_REX=0; shift ;;
     --theme)          THEME="$2"; shift 2 ;;
     --locales)        LOCALES="$2"; shift 2 ;;
     --start-dir)      START_DIR="$2"; shift 2 ;;
@@ -297,6 +303,7 @@ passthru() {
   (( FORCE_FULL ))     && a+=(--force-full)
   (( WITH_TAILSCALE )) || a+=(--no-tailscale)
   (( WITH_SOCKS5 ))    && a+=(--with-socks5 "$SOCKS5_PORT")
+  (( WITH_REX ))       || a+=(--no-rex)
   (( WITH_SOCKS5_LOCAL )) && a+=(--with-socks5-local "$SOCKS5_LOCAL_PORT")
   [[ -n "$SOCKS5_RELAY_UPSTREAM" ]] && a+=(--with-socks5-relay "$SOCKS5_RELAY_UPSTREAM" "$SOCKS5_RELAY_PORT")
   [[ -n "$LIVESYNC_URL" ]] && a+=(--with-livesync-relay "$LIVESYNC_URL" "$LIVESYNC_PORT")
@@ -1609,6 +1616,87 @@ WantedBy=multi-user.target"
   ok "relais LiveSync actif : Obsidian → http://localhost:$LIVESYNC_PORT (→ $LIVESYNC_URL)"
 }
 
+# serveur Rex (multiplexeur, superlogical.com/rex) joignable depuis Rex for Mac.
+# Binaire seul (--tarball → /usr/local/bin) : pas d'unités système, pas de
+# dépôt pacman (pacman -Syu est bloqué sous Omarchy). Serveur PERSONNEL en
+# unité systemd --user + linger : il tourne sous notre compte, survit à la
+# déconnexion et au reboot.
+# Écoute sur l'IP tailnet (tailnet://:7297), PAS derrière Tailscale Serve :
+# Serve ne transmet pas l'identité des appareils tagués — or toute la flotte
+# l'est, Macs compris — et Rex les refuse alors tous (403). tailnet:// demande
+# à tailscaled qui appelle (whois), ce qui marche pour les tagués.
+# --tailnet-allow-identified : un nœud tag:omarchy n'a pas de propriétaire, le
+# mode par défaut (propriétaire seul) n'admettrait personne. Tout appelant que
+# l'ACL laisse joindre ce port a donc un shell sous notre compte : à restreindre
+# via l'ACL. Une connexion depuis l'IP tailnet du nœud lui-même est refusée
+# par Rex (voulu) : tester depuis une autre machine.
+REX_BIN=/usr/local/bin/rex
+REX_UNIT=rex.service
+setup_rex() {
+  (( WITH_REX )) || { skip "Rex désactivé (--no-rex)"; return 0; }
+  [[ "$REX_PORT" =~ ^[0-9]+$ ]] && (( REX_PORT >= 1 && REX_PORT <= 65535 )) \
+    || die "Rex : port invalide « $REX_PORT »"
+  if [[ ! -x "$REX_BIN" ]]; then
+    # le script gère lui-même sudo ; une relance le met à jour (cf. upgrade.sh)
+    asrootsh "curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --tarball" \
+      || { warn "Rex : installation échouée — serveur non configuré"; return 0; }
+  fi
+  local uid; uid="$(id -u)"
+  local udir="$HOME/.config/systemd/user"
+  local unit="[Unit]
+Description=devbox — serveur Rex, joignable sur la tailnet (:$REX_PORT)
+
+[Service]
+ExecStart=$REX_BIN server run --extra-listen tailnet://:$REX_PORT --tailnet-allow-identified
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target"
+  # linger : le gestionnaire systemd --user démarre au boot, sans session ouverte
+  [[ -e "/var/lib/systemd/linger/$DEVBOX_USER" ]] || asroot loginctl enable-linger "$DEVBOX_USER"
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait $udir/$REX_UNIT ($REX_BIN server run --extra-listen tailnet://:$REX_PORT)"
+    return 0
+  fi
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+  local changed=0
+  if [[ "$(cat "$udir/$REX_UNIT" 2>/dev/null)" != "$unit" ]]; then
+    mkdir -p "$udir"
+    printf '%s\n' "$unit" > "$udir/$REX_UNIT"
+    systemctl --user daemon-reload
+    changed=1
+  fi
+  if ! systemctl --user is-active -q "$REX_UNIT"; then
+    # un serveur lancé hors unité (`rex server start`, ou autostart d'une
+    # commande rex) tient déjà le socket : on ne l'arrête que s'il est vide
+    local st; st="$("$REX_BIN" --autostart=false server status 2>/dev/null)"
+    if [[ -n "$st" ]]; then
+      if grep -q '^sessions: 0$' <<<"$st"; then
+        "$REX_BIN" server stop >/dev/null 2>&1; sleep 1
+      else
+        warn "Rex : un serveur hors unité tourne avec des sessions — laissé en place. Puis : rex server stop && systemctl --user start $REX_UNIT"
+        systemctl --user enable "$REX_UNIT" >/dev/null 2>&1
+        return 0
+      fi
+    fi
+    systemctl --user enable --now "$REX_UNIT"
+  elif (( changed )); then
+    warn "Rex : unité modifiée — redémarrage NON automatique (couperait les sessions). Quand c'est possible : systemctl --user restart $REX_UNIT"
+  fi
+  systemctl --user enable -q "$REX_UNIT" 2>/dev/null
+  if has ufw && asroot ufw status 2>/dev/null | grep -q '^Status: active'; then
+    asroot ufw allow in on tailscale0 to any port "$REX_PORT" proto tcp comment 'rex via tailnet' >/dev/null \
+      && ok "ufw : Rex (TCP $REX_PORT) ouvert sur tailscale0" \
+      || warn "ufw : règle Rex non posée"
+  fi
+  if systemctl --user is-active -q "$REX_UNIT"; then
+    ok "serveur Rex actif : http://$TS_HOSTNAME.<tailnet>.ts.net:$REX_PORT (Rex for Mac → Add Remote Host)"
+  else
+    warn "Rex : $REX_UNIT inactif — journalctl --user -u $REX_UNIT"
+  fi
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   has tailscale || die "tailscale non installé (étape ③)."
@@ -1661,6 +1749,7 @@ do_tailscale() {
   setup_socks5_local
   setup_socks5_relay
   setup_livesync_relay
+  setup_rex
 }
 
 # ============================================================ ⑩ cli-auth =====

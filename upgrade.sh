@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # upgrade.sh — met à jour tout ce qui est installé sur CE nœud.
 #
-#   ./upgrade.sh              pacman (+ keyring) · AUR (yay) · mise · claude
+#   ./upgrade.sh              pacman (+ keyring) · AUR (yay) · mise · claude · rex
 #   ./upgrade.sh -n           dry-run : liste les mises à jour sans rien toucher
 #
 # Chaque étape est indépendante : un échec est signalé et on passe à la
@@ -66,6 +66,21 @@ elif (( DRY_RUN )); then
   skip "claude $(claude --version 2>/dev/null | head -1) — aurait lancé claude update"
 else
   claude update && ok "claude à jour" || { warn "claude update a échoué"; failed+=(claude); }
+fi
+
+# --- rex -----------------------------------------------------------------
+# binaire seul (install.sh --tarball, posé par bootstrap) : relancer le script
+# met à jour le binaire ; le serveur en cours garde l'ancien jusqu'au prochain
+# `systemctl --user restart rex` (qui coupe les sessions : jamais automatique).
+step "rex"
+if [[ ! -x /usr/local/bin/rex ]]; then
+  skip "rex absent"
+elif (( DRY_RUN )); then
+  skip "$(/usr/local/bin/rex version 2>/dev/null | head -1) — aurait relancé install.sh --tarball"
+else
+  curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --tarball \
+    && ok "$(/usr/local/bin/rex version | head -1) — serveur à redémarrer quand possible : systemctl --user restart rex" \
+    || { warn "mise à jour rex échouée"; failed+=(rex); }
 fi
 
 echo

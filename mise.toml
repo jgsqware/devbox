@@ -8,7 +8,7 @@
 #   mise run sync                         bootstrap sur toutes les machines tag:omarchy
 #   mise run hooks                        active le hook post-commit (push + sync auto)
 #   mise run socks5-test [hôte] [port]    teste le proxy SOCKS5 (--with-socks5)
-#   mise run upgrade [-- -n]              met à jour pacman, AUR, mise, claude (-n : dry-run)
+#   mise run upgrade [-- -n]              met à jour pacman, AUR, mise, claude, rex (-n : dry-run)
 #   mise run packages [-- -n]             installe packages.txt sur ce poste (+ AUR, twg), sans pull
 #   mise run pkg-commit [-- -n]           commite packages.txt, message généré depuis le diff (-n : l'affiche)
 #   mise run pkg-add <paquet> [-n]        GLOBALE (posée par bootstrap) : cherche, installe, ajoute, commite, pousse
