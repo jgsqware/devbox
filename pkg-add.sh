@@ -251,7 +251,12 @@ fi
 
 # ------------------------------------------------- 1. installation locale ----
 # d'abord : un paquet qui ne s'installe pas ici n'entre pas dans la liste
-(( ${#to_install[@]} ))  && { sudo pacman -S --needed --noconfirm "${to_install[@]}" || die "pacman a échoué — rien n'a été ajouté"; }
+# base pacman périmée → 404 sur les miroirs : on resynchronise avec une mise à
+# jour complète (-Syu, jamais -Sy seul : mise à jour partielle) et on réessaie
+if (( ${#to_install[@]} )) && ! sudo pacman -S --needed --noconfirm "${to_install[@]}"; then
+  warn "échec — base pacman sans doute périmée : mise à jour complète (-Syu) puis nouvel essai"
+  sudo pacman -Syu --needed --noconfirm "${to_install[@]}" || die "pacman a échoué — rien n'a été ajouté"
+fi
 (( ${#aur_install[@]} )) && { has yay || die "yay absent — mise run bootstrap"
                               yay -S --needed --noconfirm "${aur_install[@]}" || die "yay a échoué — rien n'a été ajouté"; }
 (( ${#to_install[@]} + ${#aur_install[@]} )) && ok "installé sur $(hostname)"
