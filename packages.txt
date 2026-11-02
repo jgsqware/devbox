@@ -61,6 +61,7 @@ docker-compose
 lazydocker
 incus                 # conteneurs système + VM — config : do_packages (setup_incus)
 k9s
+kubectl
 
 # --- toolchain -----------------------------------------------------------
 mise-bin              # dépôt [omarchy]
