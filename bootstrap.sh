@@ -1101,9 +1101,15 @@ EOF
 # Tâches mise GLOBALES (appelables de n'importe où) : drop-in conf.d plutôt
 # que ~/.config/mise/config.toml, qui peut appartenir à l'utilisateur/Omarchy.
 # Pointe sur le script du dépôt : un git pull suffit à le mettre à jour.
+# Déclare aussi node (LTS) globalement : sans version globale, le shim mise
+# `node` échoue hors projet (« No version is set for shim: node ») et casse
+# les hooks Claude Code qui l'appellent.
 install_mise_global_tasks() {
   local f="${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/devbox.toml" want
   want="# devbox — posé par bootstrap.sh (install_mise_global_tasks), ne pas éditer
+[tools]
+node = \"lts\"
+
 [tasks.pkg-add]
 description = \"devbox : cherche, installe, ajoute à packages.txt, commite, pousse, resync la flotte\"
 file = \"$SCRIPT_DIR/pkg-add.sh\""
@@ -1115,6 +1121,9 @@ file = \"$SCRIPT_DIR/pkg-add.sh\""
   if (( DRY_RUN )); then info "écrirait $f (tâche globale pkg-add)"; return 0; fi
   printf '%s\n' "$want" > "$f"
   ok "tâche mise globale : mise run pkg-add <paquet> (de n'importe où) — $f"
+  if has mise; then
+    run mise install node@lts && ok "node LTS global (mise)" || warn "mise install node@lts a échoué"
+  fi
 }
 
 install_git_identity() {
