@@ -79,6 +79,7 @@ tailscale
 ufw                   # auto-skippé sur WSL (pas de netfilter persistant)
 openssh               # binaire ssh (client) — sshd désactivé par cleanup_sshd
 mosh                  # mosh-server (lancé via Tailscale SSH) + client mosh — cf. alias `s`
+bitwarden-cli
 
 # --- diagnostic réseau ---------------------------------------------------
 doggo                 # dig moderne (DoH/DoT, sortie lisible) — `doggo exemple.com`
