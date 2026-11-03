@@ -251,11 +251,17 @@ fi
 
 # ------------------------------------------------- 1. installation locale ----
 # d'abord : un paquet qui ne s'installe pas ici n'entre pas dans la liste
-# base pacman périmée → 404 sur les miroirs : on resynchronise avec une mise à
-# jour complète (-Syu, jamais -Sy seul : mise à jour partielle) et on réessaie
+# base pacman périmée → 404 sur les miroirs : on propose une mise à jour
+# complète (jamais -Sy seul : mise à jour partielle) puis un nouvel essai.
+# L'échec peut avoir une autre cause (verrou, conflit…) : on demande d'abord.
+# keyring en premier, comme upgrade.sh : une clé expirée ferait échouer le -Su.
 if (( ${#to_install[@]} )) && ! sudo pacman -S --needed --noconfirm "${to_install[@]}"; then
-  warn "échec — base pacman sans doute périmée : mise à jour complète (-Syu) puis nouvel essai"
-  sudo pacman -Syu --needed --noconfirm "${to_install[@]}" || die "pacman a échoué — rien n'a été ajouté"
+  warn "échec — base pacman sans doute périmée"
+  confirm "Mise à jour complète du système (keyring puis -Su) et nouvel essai ?" \
+    || die "pacman a échoué — rien n'a été ajouté"
+  { sudo pacman -Sy --needed --noconfirm archlinux-keyring \
+      && sudo pacman -Su --needed --noconfirm "${to_install[@]}"; } \
+    || die "pacman a échoué (système peut-être déjà en partie mis à jour) — rien n'a été ajouté à la liste"
 fi
 (( ${#aur_install[@]} )) && { has yay || die "yay absent — mise run bootstrap"
                               yay -S --needed --noconfirm "${aur_install[@]}" || die "yay a échoué — rien n'a été ajouté"; }
