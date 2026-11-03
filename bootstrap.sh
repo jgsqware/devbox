@@ -54,7 +54,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins calendar hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -64,7 +64,7 @@ OMARCHY_WHY=""
 # moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
 OMARCHY_PROTECTED=(locale skel vendor shell theme)
 # rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
-OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 50-tmux.sh 90-private.sh)
+OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 50-tmux.sh 60-calendar.sh 90-private.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
@@ -74,6 +74,9 @@ SOCKS5_RELAY_UPSTREAM=""                              # opt-in — --with-socks5
 SOCKS5_RELAY_PORT="${DEVBOX_SOCKS5_RELAY_PORT:-1081}"
 LIVESYNC_URL=""                                       # opt-in — --with-livesync-relay <https://…> (relais Obsidian LiveSync)
 LIVESYNC_PORT="${DEVBOX_LIVESYNC_PORT:-5984}"
+DAVMAIL_EMAIL=""                                      # opt-in par box — --with-davmail <email> (agenda Outlook, étape calendar)
+DAVMAIL_PORT="${DEVBOX_DAVMAIL_PORT:-1088}"            # CalDAV local (1080/1081 déjà pris par les SOCKS5)
+DAVMAIL_PORT_SET=""
 WITH_REX=1                                            # actif par défaut — --no-rex : pas de serveur Rex joignable sur la tailnet
 REX_PORT="${DEVBOX_REX_PORT:-7297}"
 SUDO_NOPASSWD=0
@@ -215,6 +218,11 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
                         relais Obsidian LiveSync : http://127.0.0.1:<port> (5984
                         par défaut) ──TLS──▶ <url> (https://…ts.net) — pour un
                         hôte hors tailnet (Mac sous OrbStack) — désactivé par défaut
+  --with-davmail <email> [port]
+                        agenda Outlook O365 en headless sur CETTE box : DavMail
+                        (CalDAV 127.0.0.1:<port>, 1088 par défaut) + vdirsyncer
+                        (toutes les 15 min) + khal ; puis `cal-login` une fois.
+                        Mémorisé : les runs suivants n'ont pas besoin du flag
   --no-rex              pas de serveur Rex (multiplexeur) sur la tailnet — actif
                         par défaut : http://<nœud>.<tailnet>.ts.net:7297
   --theme <nom>         thème omarchy (défaut: tokyo-night)
@@ -230,7 +238,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins calendar hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -252,6 +260,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ serveur Rex sur l'IP tailnet, port 7297 — --no-rex pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
+  calendar  agenda Outlook : DavMail + vdirsyncer + khal — seulement si --with-davmail
+            a été passé une fois sur cette box (sinon sauté)
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -279,6 +289,8 @@ while [[ $# -gt 0 ]]; do
                       if [[ "${3:-}" =~ ^[0-9]+$ ]]; then SOCKS5_RELAY_PORT="$3"; shift 3; else shift 2; fi ;;
     --with-livesync-relay) LIVESYNC_URL="${2:-}"
                       if [[ "${3:-}" =~ ^[0-9]+$ ]]; then LIVESYNC_PORT="$3"; shift 3; else shift 2; fi ;;
+    --with-davmail)   DAVMAIL_EMAIL="${2:-}"
+                      if [[ "${3:-}" =~ ^[0-9]+$ ]]; then DAVMAIL_PORT="$3"; DAVMAIL_PORT_SET=1; shift 3; else shift 2; fi ;;
     --no-rex)         WITH_REX=0; shift ;;
     --theme)          THEME="$2"; shift 2 ;;
     --locales)        LOCALES="$2"; shift 2 ;;
@@ -307,6 +319,7 @@ passthru() {
   (( WITH_SOCKS5_LOCAL )) && a+=(--with-socks5-local "$SOCKS5_LOCAL_PORT")
   [[ -n "$SOCKS5_RELAY_UPSTREAM" ]] && a+=(--with-socks5-relay "$SOCKS5_RELAY_UPSTREAM" "$SOCKS5_RELAY_PORT")
   [[ -n "$LIVESYNC_URL" ]] && a+=(--with-livesync-relay "$LIVESYNC_URL" "$LIVESYNC_PORT")
+  [[ -n "$DAVMAIL_EMAIL" ]] && a+=(--with-davmail "$DAVMAIL_EMAIL" "$DAVMAIL_PORT")
   [[ -n "$SKIP_LIST" ]] && a+=(--skip "$SKIP_LIST")
   printf '%q ' "${a[@]}"
 }
@@ -1888,6 +1901,184 @@ do_claude_plugins() {
   fi
 }
 
+# ========================================================= ⑩c calendar ======
+# Agenda Outlook (Office 365) en headless, PAR BOX (opt-in --with-davmail <email>) :
+#
+#   Exchange O365 ──EWS──▶ DavMail (CalDAV 127.0.0.1:<port>) ──▶ vdirsyncer ──▶ ~/.local/share/calendars ──▶ khal
+#
+# Auth : O365DeviceCode — DavMail affiche un code à saisir sur
+# microsoft.com/devicelogin depuis n'importe quel navigateur (aucun écran ici).
+# `cal-login` (rc.d/60-calendar.sh) déclenche ce flux puis la 1re synchro.
+# Le refresh token est stocké chiffré par DavMail dans ~/.local/state/davmail/,
+# avec un mot de passe client local aléatoire (client-password) que vdirsyncer
+# rejoue : il ne correspond à AUCUN mot de passe Microsoft.
+# L'e-mail est mémorisé dans ~/.config/davmail/email : les runs suivants (sync
+# de la flotte, sans le flag) reconvergent la config sans qu'on le redonne.
+# Lecture seule côté Outlook (read_only dans vdirsyncer).
+DAVMAIL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/davmail"
+DAVMAIL_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/davmail"
+DAVMAIL_UNIT=davmail@davmail.service                  # unité user fournie par le paquet AUR
+VDIRSYNCER_UNIT=devbox-vdirsyncer                      # .service + .timer
+CALENDARS_DIR="$HOME/.local/share/calendars"
+do_calendar() {
+  step "⑩c" "Agenda Outlook (DavMail → vdirsyncer → khal)"
+  if [[ -z "$DAVMAIL_EMAIL" && -r "$DAVMAIL_DIR/email" ]]; then
+    DAVMAIL_EMAIL="$(<"$DAVMAIL_DIR/email")"
+    local p; p="$(sed -n 's/^davmail\.caldavPort=//p' "$DAVMAIL_DIR/davmail.properties" 2>/dev/null || true)"
+    [[ -n "$p" && -z "${DEVBOX_DAVMAIL_PORT:-}" && -z "$DAVMAIL_PORT_SET" ]] && DAVMAIL_PORT="$p"
+  fi
+  if [[ -z "$DAVMAIL_EMAIL" ]]; then
+    skip "pas activé sur cette box (--with-davmail <email>)"
+    return 0
+  fi
+  [[ "$DAVMAIL_EMAIL" =~ ^[^@[:space:]/]+@[^@[:space:]/]+\.[^@[:space:]/]+$ ]] \
+    || die "--with-davmail : adresse e-mail attendue, pas « $DAVMAIL_EMAIL »"
+  [[ "$DAVMAIL_PORT" =~ ^[0-9]+$ ]] && (( DAVMAIL_PORT >= 1 && DAVMAIL_PORT <= 65535 )) \
+    || die "--with-davmail : port invalide « $DAVMAIL_PORT »"
+
+  # Java headless AVANT davmail : sinon yay satisfait `java-runtime` avec le
+  # premier fournisseur venu (JRE complet, dépendances X11).
+  asroot pacman -S --needed --noconfirm jre-openjdk-headless vdirsyncer khal
+  if ! pacman -Qq davmail >/dev/null 2>&1; then
+    has yay || bootstrap_yay_from_source
+    if ! has yay || ! run yay -S --needed --noconfirm davmail; then
+      warn "davmail (AUR) non installé — agenda non configuré"
+      return 0
+    fi
+  fi
+
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait $DAVMAIL_DIR/{davmail.properties,email,client-password}, ~/.config/vdirsyncer/config, ~/.config/khal/config (si absent)"
+    info "[dry-run] activerait $DAVMAIL_UNIT (CalDAV 127.0.0.1:$DAVMAIL_PORT) + $VDIRSYNCER_UNIT.timer"
+    return 0
+  fi
+
+  ( umask 077; mkdir -p "$DAVMAIL_DIR" "$DAVMAIL_STATE" )
+  printf '%s\n' "$DAVMAIL_EMAIL" > "$DAVMAIL_DIR/email"
+  if [[ ! -s "$DAVMAIL_DIR/client-password" ]]; then
+    ( umask 077; head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' > "$DAVMAIL_DIR/client-password" )
+  fi
+
+  local props="# géré par devbox (bootstrap.sh, étape calendar) — réécrit à chaque run
+davmail.server=true
+davmail.mode=O365EWS
+davmail.authentication=O365DeviceCode
+davmail.url=https://outlook.office365.com/EWS/Exchange.asmx
+davmail.allowRemote=false
+davmail.bindAddress=127.0.0.1
+davmail.caldavPort=$DAVMAIL_PORT
+davmail.imapPort=
+davmail.ldapPort=
+davmail.popPort=
+davmail.smtpPort=
+davmail.caldavPastDelay=90
+davmail.disableUpdateCheck=true
+davmail.oauth.persistToken=true
+davmail.oauth.tokenFilePath=$DAVMAIL_STATE/tokens.properties
+davmail.logFilePath=$DAVMAIL_STATE/davmail.log
+davmail.logFileSize=1MB
+log4j.rootLogger=WARN
+log4j.logger.davmail=INFO
+log4j.logger.httpclient.wire=WARN
+log4j.logger.org.apache.http=WARN"
+  local changed=0
+  if [[ "$(cat "$DAVMAIL_DIR/davmail.properties" 2>/dev/null)" != "$props" ]]; then
+    ( umask 077; printf '%s\n' "$props" > "$DAVMAIL_DIR/davmail.properties" )
+    changed=1
+  fi
+
+  local vconf="# géré par devbox (bootstrap.sh, étape calendar) — réécrit à chaque run
+[general]
+status_path = \"$HOME/.local/state/vdirsyncer/status/\"
+
+[pair outlook]
+a = \"outlook_remote\"
+b = \"outlook_local\"
+collections = [\"from a\"]
+conflict_resolution = \"a wins\"
+metadata = [\"displayname\", \"color\"]
+
+[storage outlook_remote]
+type = \"caldav\"
+url = \"http://127.0.0.1:$DAVMAIL_PORT/users/$DAVMAIL_EMAIL/\"
+username = \"$DAVMAIL_EMAIL\"
+password.fetch = [\"command\", \"cat\", \"$DAVMAIL_DIR/client-password\"]
+read_only = true
+
+[storage outlook_local]
+type = \"filesystem\"
+path = \"$CALENDARS_DIR/outlook/\"
+fileext = \".ics\""
+  mkdir -p "$HOME/.config/vdirsyncer" "$CALENDARS_DIR/outlook"
+  [[ "$(cat "$HOME/.config/vdirsyncer/config" 2>/dev/null)" == "$vconf" ]] \
+    || printf '%s\n' "$vconf" > "$HOME/.config/vdirsyncer/config"
+
+  # khal : config de départ seulement — ensuite, elle est à toi
+  if [[ ! -e "$HOME/.config/khal/config" ]]; then
+    mkdir -p "$HOME/.config/khal"
+    cat > "$HOME/.config/khal/config" <<KHAL
+# posé une fois par devbox (étape calendar) — libre à toi de le modifier
+[calendars]
+[[outlook]]
+path = $CALENDARS_DIR/outlook/*
+type = discover
+readonly = True
+
+[locale]
+timeformat = %H:%M
+dateformat = %d/%m
+longdateformat = %d/%m/%Y
+datetimeformat = %d/%m %H:%M
+longdatetimeformat = %d/%m/%Y %H:%M
+firstweekday = 0
+KHAL
+  fi
+
+  local udir="$HOME/.config/systemd/user"
+  mkdir -p "$udir"
+  local svc="[Unit]
+Description=devbox — synchro agenda Outlook (vdirsyncer via DavMail)
+After=$DAVMAIL_UNIT
+Wants=$DAVMAIL_UNIT
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/vdirsyncer sync"
+  local tmr="[Unit]
+Description=devbox — synchro agenda Outlook toutes les 15 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+  [[ "$(cat "$udir/$VDIRSYNCER_UNIT.service" 2>/dev/null)" == "$svc" ]] || { printf '%s\n' "$svc" > "$udir/$VDIRSYNCER_UNIT.service"; changed=1; }
+  [[ "$(cat "$udir/$VDIRSYNCER_UNIT.timer"   2>/dev/null)" == "$tmr" ]] || { printf '%s\n' "$tmr" > "$udir/$VDIRSYNCER_UNIT.timer";   changed=1; }
+
+  # linger : le gestionnaire systemd --user (DavMail, timer) tourne sans session ouverte
+  [[ -e "/var/lib/systemd/linger/$DEVBOX_USER" ]] || asroot loginctl enable-linger "$DEVBOX_USER"
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  systemctl --user daemon-reload
+  if (( changed )) && systemctl --user is-active -q "$DAVMAIL_UNIT"; then
+    systemctl --user restart "$DAVMAIL_UNIT"
+  fi
+  systemctl --user enable --now "$DAVMAIL_UNIT" "$VDIRSYNCER_UNIT.timer" \
+    || warn "activation de $DAVMAIL_UNIT / $VDIRSYNCER_UNIT.timer échouée — journalctl --user -u $DAVMAIL_UNIT"
+
+  if systemctl --user is-active -q "$DAVMAIL_UNIT"; then
+    ok "DavMail actif : CalDAV http://127.0.0.1:$DAVMAIL_PORT ($DAVMAIL_EMAIL)"
+  else
+    warn "DavMail inactif — journalctl --user -u $DAVMAIL_UNIT"
+  fi
+  if grep -qiF "${DAVMAIL_EMAIL,,}" "$DAVMAIL_STATE/tokens.properties" 2>/dev/null; then
+    ok "Outlook connecté (jeton présent) — synchro toutes les 15 min, \`khal list today 7d\`"
+  else
+    warn "pas encore connecté à Outlook — lance \`cal-login\` (code à saisir sur microsoft.com/devicelogin)"
+  fi
+}
+
 # ============================================================== ⑪ hooks =====
 # Chaque clone porte le hook post-commit : un commit sur N'IMPORTE quel nœud
 # pousse puis resynchronise toute la flotte (sync dans tous les sens). Pour
@@ -2011,6 +2202,10 @@ do_verify() {
     check "relais SOCKS5" "systemctl is-active --quiet $SOCKS5_RELAY_UNIT && grep -o -- '-> .*' /etc/systemd/system/$SOCKS5_RELAY_UNIT"
   [[ -n "$LIVESYNC_URL" ]] || systemctl is-enabled --quiet "$LIVESYNC_UNIT" 2>/dev/null && \
     check "relais LiveSync" "systemctl is-active --quiet $LIVESYNC_UNIT && grep -o -- '-> .*' /etc/systemd/system/$LIVESYNC_UNIT"
+  if [[ -r "$DAVMAIL_DIR/email" ]]; then
+    check "agenda Outlook (DavMail)" "XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)} systemctl --user is-active -q $DAVMAIL_UNIT && sed -n 's/^davmail.caldavPort=/CalDAV :/p' '$DAVMAIL_DIR/davmail.properties'"
+    check "synchro agenda (timer)" "XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)} systemctl --user is-active -q $VDIRSYNCER_UNIT.timer && echo 'toutes les 15 min'"
+  fi
   check "sshd désactivé"  "( ! command -v sshd >/dev/null 2>&1 || ! systemctl is-active --quiet sshd 2>/dev/null ) && echo 'ok'"
   check "client ssh présent"      "command -v ssh >/dev/null 2>&1 && ssh -V 2>&1"
   check "git hook actif"          "test \"\$(git -C '$SCRIPT_DIR' config --get core.hooksPath)\" = hooks && echo hooks"
@@ -2085,6 +2280,7 @@ main() {
       tailscale) do_tailscale ;;
       cli-auth)  do_cli_auth ;;
       claude-plugins) do_claude_plugins ;;
+      calendar)  do_calendar ;;
       hooks)     do_hooks ;;
       verify)    do_verify ;;
     esac
