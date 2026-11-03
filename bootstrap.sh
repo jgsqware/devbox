@@ -1904,7 +1904,11 @@ do_moshi() {
   elif (( DRY_RUN )); then
     info "curl -fsSL https://getmoshi.app/install.sh | sh (dry-run, non exécuté)"
     return 0
-  elif curl -fsSL https://getmoshi.app/install.sh | sh </dev/null >/dev/null 2>&1 && has moshi-hook; then
+  # script téléchargé PUIS lancé : `curl | sh </dev/null` donnerait /dev/null à sh
+  # au lieu du script. stdin=/dev/null : pas de questions en sync-fleet.
+  elif local inst; inst="$(mktemp)" \
+       && curl -fsSL https://getmoshi.app/install.sh -o "$inst" \
+       && sh "$inst" </dev/null >/dev/null 2>&1; rm -f "$inst"; has moshi-hook; then
     ok "moshi-hook installé → ~/.local/bin/moshi-hook"; changed=1
   else
     warn "installation de moshi-hook échouée — relance à la main : curl -fsSL https://getmoshi.app/install.sh | sh"
