@@ -54,7 +54,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -230,7 +230,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -252,6 +252,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ serveur Rex sur l'IP tailnet, port 7297 — --no-rex pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
+  moshi     moshi-hook (getmoshi.app) : binaire, pairing (token de la couche privée), hooks agents, service systemd user
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1888,6 +1889,55 @@ do_claude_plugins() {
   fi
 }
 
+# ============================================================== ⑩c moshi =====
+# moshi-hook (getmoshi.app) : relaie les demandes d'approbation des agents
+# (Claude, Codex…) vers l'app Moshi du téléphone. Le token de pairing est un
+# secret : il vit dans la couche privée ($PRIVATE_DIR/moshi/pairing-token),
+# jamais dans ce dépôt public. Sans token : installé mais pas pairé.
+do_moshi() {
+  step "⑩c" "moshi-hook (approbations agents sur le téléphone)"
+  [[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"   # ssh non interactif (sync-fleet)
+  local token_file="$PRIVATE_DIR/moshi/pairing-token" changed=0
+
+  if has moshi-hook; then
+    ok "moshi-hook déjà installé ($(moshi-hook --version 2>/dev/null | head -1))"
+  elif (( DRY_RUN )); then
+    info "curl -fsSL https://getmoshi.app/install.sh | sh (dry-run, non exécuté)"
+    return 0
+  elif curl -fsSL https://getmoshi.app/install.sh | sh </dev/null >/dev/null 2>&1 && has moshi-hook; then
+    ok "moshi-hook installé → ~/.local/bin/moshi-hook"; changed=1
+  else
+    warn "installation de moshi-hook échouée — relance à la main : curl -fsSL https://getmoshi.app/install.sh | sh"
+    return 0
+  fi
+
+  if moshi-hook status 2>/dev/null | grep -q '^status: *paired'; then
+    ok "moshi-hook déjà pairé"
+  elif [[ ! -r "$token_file" ]]; then
+    warn "pas de token moshi ($token_file, couche privée) — pairing sauté"
+  elif (( DRY_RUN )); then
+    info "moshi-hook pair --token <couche privée> (dry-run, non exécuté)"
+  else
+    # pas de run() : en dry-run il afficherait le token
+    moshi-hook pair --token "$(tr -d '[:space:]' <"$token_file")" >/dev/null \
+      && { ok "moshi-hook pairé ($(hostname))"; changed=1; } \
+      || warn "pairing moshi échoué — token expiré ? relance : moshi-hook pair --token <token>"
+  fi
+
+  # hooks agents : réécrits à chaque passage (nouvel agent installé depuis…)
+  run moshi-hook install >/dev/null 2>&1 \
+    && ok "hooks agents moshi installés" \
+    || warn "moshi-hook install a échoué — relance à la main"
+
+  if (( changed )) || ! systemctl --user is-active -q moshi-hook 2>/dev/null; then
+    { run moshi-hook service install >/dev/null 2>&1; run moshi-hook service restart >/dev/null 2>&1; } \
+      && ok "service moshi-hook (re)démarré" \
+      || warn "service moshi-hook non démarré — relance : moshi-hook service restart"
+  else
+    ok "service moshi-hook actif"
+  fi
+}
+
 # ============================================================== ⑪ hooks =====
 # Chaque clone porte le hook post-commit : un commit sur N'IMPORTE quel nœud
 # pousse puis resynchronise toute la flotte (sync dans tous les sens). Pour
@@ -2030,6 +2080,8 @@ do_verify() {
     _sk="${_sk%/}"; _sk="${_sk##*/}"
     has claude && check "skill claude $_sk" "test -f \"\$HOME/.claude/skills/$_sk/SKILL.md\" && echo présent"
   done
+  has moshi-hook && check "moshi-hook pairé" "moshi-hook status 2>/dev/null | grep -q '^status: *paired' && moshi-hook status | sed -n 's/^display name: *//p'"
+  has moshi-hook && check "service moshi-hook" "systemctl --user is-active moshi-hook"
   has claude && check "plugin claude tmux-agent-sidebar" "claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
@@ -2085,6 +2137,7 @@ main() {
       tailscale) do_tailscale ;;
       cli-auth)  do_cli_auth ;;
       claude-plugins) do_claude_plugins ;;
+      moshi)     do_moshi ;;
       hooks)     do_hooks ;;
       verify)    do_verify ;;
     esac
