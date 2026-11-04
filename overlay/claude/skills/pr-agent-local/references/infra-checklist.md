@@ -111,6 +111,16 @@ cap of `review` does not apply to this list.
   and the observed output. Quote the code or the output when checking.
 - Error messages name the next action (command, folder, doc section).
 
+## 8b. One implementation
+
+- The same check or rule written twice (two playbooks asking the same API
+  differently, one expression copied per item): one copy drifts. Put it in a
+  shared task file (`include_tasks`) or a loop over the items.
+- No dependency on a tool the host may not have (`curl`, `jq`, `python3`
+  in a `shell:`) when an Ansible module does the job (`uri`, `*_info`). If a
+  missing tool is possible, its failure must be visible, not a silent
+  fallback such as "unverified".
+
 ## 9. CI and tests
 
 - New or changed playbooks are covered by a CI lint job for their path
