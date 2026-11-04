@@ -31,6 +31,8 @@ Each suggestion (PR-Agent `CodeSuggestion` schema):
   label: critical bug | security | general     # broad mode: possible bug, possible issue, performance, enhancement, best practice, maintainability, typo
 ```
 
+Infra branches: a missing check-mode guard, a decision read from display text, or an unvalidated input in a command is a valid suggestion; score it like a bug (see [infra-checklist.md](infra-checklist.md)).
+
 ## Step 2 — Self-reflection (separate subagent)
 
 Launch one `general-purpose` Agent. Give it **only**: the diff (with new-file line numbers), the suggestions as YAML, and the brief below. Do not give it your reasoning.

@@ -49,6 +49,10 @@ Read the JSON summary it prints, then the `diff.md` / `chunk-N.md` file(s).
 
 Also read `CLAUDE.md` / `AGENTS.md` at the repo root if present (PR-Agent's `repo_context`).
 
+**House rule — infra checklist (deployment code)**: when the branch touches Ansible (playbooks, task files, templates, vars), deploy / backup / restore / migration scripts or CI jobs, walk **every** item of [references/infra-checklist.md](references/infra-checklist.md) against the full files, not only the diff. It was built from comments human reviewers still had to write after this skill had run: the target is that they find nothing from it. The 0-3 cap on key issues does **not** apply to it. A missing or broken dry run (`--check` / `--dry-run`), or a dry run that predicts the opposite of the real run, is always a key issue.
+
+**Check the description against the code**: every claim in the commit messages and in the MR description (when there is one: `glab mr view` / `gh pr view` output pasted by the user, or a description file given in the arguments) is checked against the code and, when given, the observed output. A claim the code does not back is a finding.
+
 ## 3. Run the tool
 
 Follow the matching reference exactly (schema, rules, output format):
@@ -63,8 +67,10 @@ For `improve`, the self-reflection step **must run in a separate subagent** (Age
 
 **Per tool**:
 - `describe`: run the script once (`--chunks 1`).
-- `review`: run the script once (`--chunks 1`).
+- `review`: run the script once (`--chunks 1`). Infra branch → also the checklist pass (below).
 - `improve`: run with `--chunks 3` (PR-Agent `max_number_of_calls=3`). One chunk → generate yourself. Several chunks → one `general-purpose` subagent per chunk **in parallel**, each given its chunk file path and [references/improve.md](references/improve.md) Step 1, returning YAML. Then one reflection subagent on all suggestions.
+
+**Infra checklist pass** (`review`, `improve`, `all`, on infra branches): run it in a **separate `general-purpose` subagent**, given the list of changed files, the repo path and [references/infra-checklist.md](references/infra-checklist.md), with the instruction to open every changed and included file, walk all items, and return one line per item: `§n item — ok | issue: <file:line> <trigger scenario> | n/a`. A fresh reader catches what the author of the change (often you, in the same session) is blind to. Confirm each `issue` yourself before reporting it.
 
 **`all` = multi-stage, like PR-Agent**: run `describe` first, then re-run the script with `--summaries-json '…'` (describe's per-file `changes_summary`; no heredoc, no pipe, so the pre-authorised prefix still matches) for `review` and `improve`. The later stages see describe's summary of each file.
 
@@ -72,6 +78,7 @@ For `improve`, the self-reflection step **must run in a separate subagent** (Age
 
 - Start with a one-line verdict: number of key issues, highest suggestion score, and whether to push as is.
 - Then the formatted output from the reference.
+- Infra branch: then a **"🧱 Infra checklist"** section: a table with one row per checklist item that is `issue` (file:line, scenario, fix), then one line with the count of `ok` and `n/a` items. The verdict says "do not push" while any item is `issue`.
 - With `--save`, give the full path of the saved file.
 - **Never** modify code, commit or push. To apply a suggestion, the user asks for it afterwards.
 

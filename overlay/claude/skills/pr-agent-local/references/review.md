@@ -16,6 +16,12 @@ Provide constructive, concise feedback on the change. Focus on **new code** (`+`
 - Limited confidence + high impact (data loss, security) → report it and say what remains uncertain. Otherwise, prefer not reporting over guessing.
 - If code ends at an opening brace / new scope, it is not "incomplete": analyse what is shown.
 
+### Infra branches (required, beyond PR-Agent)
+
+For deployment code, also walk [infra-checklist.md](infra-checklist.md) item by item (dry-run parity, decisions on booleans and data, destructive steps, input validation, image pinning, secrets in diff, real health checks, description vs code, CI, Jira key). Its findings go in the "🧱 Infra checklist" section, **not** limited to 3. The most severe ones (data loss, wrong dry-run prediction, broken `--check`) are also key issues (`issue_header`: "Dry Run", "Data Loss", "Injection"…).
+
+- `relevant_tests`: `Yes` only if the description or the commits show the dry run **and** the failure paths were exercised.
+
 ## How to write each issue
 
 - Say directly **why** it is a problem and the **realistic scenario** where it shows up.
