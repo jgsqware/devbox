@@ -54,7 +54,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi cleanup hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -230,7 +230,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi cleanup hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -253,6 +253,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
   claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
   moshi     moshi-hook (getmoshi.app) : binaire, pairing (token de la couche privée), hooks agents, service systemd user
+  cleanup   timer quotidien devbox-cleanup : VMs Incus *-sim arrêtées depuis 2 j, images Docker
+            inutilisées, cache pacman, dumps Sonar non lus depuis 2 j
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -1942,6 +1944,51 @@ do_moshi() {
   fi
 }
 
+# ============================================================ ⑩d cleanup ===
+# Nettoyage disque régulier (overlay/cleanup/devbox-cleanup, en root) : ce qui
+# n'a pas servi depuis IDLE_DAYS jours. Détail des règles en tête du script.
+# Dry-run à la main : sudo devbox-cleanup -n ; journal : journalctl -u devbox-cleanup
+CLEANUP_BIN=/usr/local/bin/devbox-cleanup
+CLEANUP_UNIT=devbox-cleanup
+do_cleanup() {
+  step "⑩d" "nettoyage disque régulier (devbox-cleanup.timer)"
+  local src="$SCRIPT_DIR/overlay/cleanup/devbox-cleanup" changed=0
+  local svc="[Unit]
+Description=devbox — nettoyage disque (sims Incus, images Docker, cache pacman, dumps Sonar)
+
+[Service]
+Type=oneshot
+Environment=CLEANUP_USER=$(id -un) IDLE_DAYS=2
+ExecStart=$CLEANUP_BIN
+Nice=19
+IOSchedulingClass=idle"
+  local tmr="[Unit]
+Description=devbox — nettoyage disque quotidien
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target"
+  if (( DRY_RUN )); then
+    info "[dry-run] installerait $CLEANUP_BIN + /etc/systemd/system/$CLEANUP_UNIT.{service,timer}"
+    return 0
+  fi
+  same_file "$src" "$CLEANUP_BIN" || { asroot install -m 755 "$src" "$CLEANUP_BIN"; changed=1; }
+  if [[ "$(cat "/etc/systemd/system/$CLEANUP_UNIT.service" 2>/dev/null)" != "$svc" ]]; then
+    printf '%s\n' "$svc" | asroot tee "/etc/systemd/system/$CLEANUP_UNIT.service" >/dev/null; changed=1
+  fi
+  if [[ "$(cat "/etc/systemd/system/$CLEANUP_UNIT.timer" 2>/dev/null)" != "$tmr" ]]; then
+    printf '%s\n' "$tmr" | asroot tee "/etc/systemd/system/$CLEANUP_UNIT.timer" >/dev/null; changed=1
+  fi
+  (( changed )) && asroot systemctl daemon-reload
+  asroot systemctl enable --now "$CLEANUP_UNIT.timer" >/dev/null 2>&1 \
+    && ok "$CLEANUP_UNIT.timer actif (prochain : $(systemctl show -P NextElapseUSecRealtime "$CLEANUP_UNIT.timer" 2>/dev/null))" \
+    || warn "$CLEANUP_UNIT.timer non activé"
+}
+
 # ============================================================== ⑪ hooks =====
 # Chaque clone porte le hook post-commit : un commit sur N'IMPORTE quel nœud
 # pousse puis resynchronise toute la flotte (sync dans tous les sens). Pour
@@ -2086,6 +2133,7 @@ do_verify() {
   done
   has moshi-hook && check "moshi-hook pairé" "moshi-hook status 2>/dev/null | grep -q '^status: *paired' && moshi-hook status | sed -n 's/^display name: *//p'"
   has moshi-hook && check "service moshi-hook" "systemctl --user is-active moshi-hook"
+  check "timer devbox-cleanup" "systemctl is-active devbox-cleanup.timer"
   has claude && check "plugin claude tmux-agent-sidebar" "claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
@@ -2142,6 +2190,7 @@ main() {
       cli-auth)  do_cli_auth ;;
       claude-plugins) do_claude_plugins ;;
       moshi)     do_moshi ;;
+      cleanup)   do_cleanup ;;
       hooks)     do_hooks ;;
       verify)    do_verify ;;
     esac

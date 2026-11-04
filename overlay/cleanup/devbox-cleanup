@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# devbox-cleanup — libère le disque de ce qui ne sert plus.
+# Lancé (en root) par devbox-cleanup.timer, ou à la main :
+#   sudo devbox-cleanup -n    # dry-run : affiche sans rien supprimer
+#
+# « Ne sert plus » = pas utilisé depuis IDLE_DAYS jours (défaut 2) :
+#   · VMs/conteneurs Incus *-sim : arrêtés ET non démarrés depuis IDLE_DAYS → supprimés
+#     (une instance qui tourne est en usage : jamais touchée). Se recrée avec mise run sim:up.
+#   · images Docker (store containerd) : docker image prune -a — garde celles
+#     qu'un conteneur (même arrêté) référence.
+#   · cache pacman : pacman -Sc (ne garde que les versions installées).
+#   · dumps Sonar : chaque dossier de $SONAR_BACKUPS dont aucun fichier n'a été
+#     lu ni modifié depuis IDLE_DAYS (atime/mtime) → supprimé ; liens cassés retirés.
+#
+# Réglages (env, cf. Environment= dans l'unité) :
+#   IDLE_DAYS       défaut 2
+#   SIM_GLOB        défaut '*-sim'
+#   SONAR_BACKUPS   défaut ~$CLEANUP_USER/platform/sonar-migration/ansible/backups
+set -uo pipefail
+
+DRY_RUN=0
+[[ "${1:-}" == -n || "${1:-}" == --dry-run ]] && DRY_RUN=1
+
+IDLE_DAYS="${IDLE_DAYS:-2}"
+SIM_GLOB="${SIM_GLOB:-*-sim}"
+CLEANUP_USER="${CLEANUP_USER:-${SUDO_USER:-$(id -un)}}"
+USER_HOME="$(getent passwd "$CLEANUP_USER" | cut -d: -f6)"
+SONAR_BACKUPS="${SONAR_BACKUPS:-$USER_HOME/platform/sonar-migration/ansible/backups}"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+
+now=$(date +%s)
+cutoff=$(( now - IDLE_DAYS * 86400 ))
+
+log()  { printf '%s\n' "$*"; }
+run()  { if (( DRY_RUN )); then log "  [dry-run] $*"; else "$@"; fi; }
+has()  { command -v "$1" >/dev/null 2>&1; }
+freed_root() { df -B1 --output=avail / | tail -1; }
+
+before=$(freed_root)
+log "devbox-cleanup — seuil d'inactivité : ${IDLE_DAYS} j$( (( DRY_RUN )) && echo ' · DRY-RUN')"
+
+# --- 1. instances Incus de simulation -------------------------------------
+if has incus && incus info >/dev/null 2>&1; then
+  incus list -f json 2>/dev/null \
+    | jq -r '.[] | [.name, .status, (.last_used_at // .created_at)] | @tsv' \
+    | while IFS=$'\t' read -r name status last; do
+        # shellcheck disable=SC2053
+        [[ "$name" == $SIM_GLOB ]] || continue
+        last_s=$(date -d "$last" +%s 2>/dev/null || echo "$now")
+        age=$(( (now - last_s) / 86400 ))
+        if [[ "$status" != Stopped ]]; then
+          log "incus : $name $status — en usage, laissé"
+        elif (( last_s > cutoff )); then
+          log "incus : $name arrêté depuis ${age} j (< ${IDLE_DAYS}) — gardé"
+        else
+          log "incus : $name arrêté depuis ${age} j — suppression"
+          run incus delete "$name"
+        fi
+      done
+else
+  log "incus : absent ou inactif — sauté"
+fi
+
+# --- 2. images Docker (store containerd) ----------------------------------
+if has docker && docker info >/dev/null 2>&1; then
+  if (( DRY_RUN )); then
+    log "docker : images supprimables (non référencées par un conteneur) :"
+    used=$(docker ps -aq | xargs -r docker inspect -f '{{.Image}}' 2>/dev/null | sort -u)
+    docker images -q --no-trunc | sort -u | grep -vxF -f <(printf '%s\n' "$used") \
+      | xargs -r docker image inspect -f '  {{index .RepoTags 0}}' 2>/dev/null || true
+  else
+    docker image prune -a -f | tail -1
+    docker builder prune -f >/dev/null 2>&1 || true
+  fi
+else
+  log "docker : absent ou démon inaccessible — sauté"
+fi
+
+# --- 3. cache pacman ------------------------------------------------------
+if has pacman; then
+  if [[ -e /var/lib/pacman/db.lck ]]; then
+    log "pacman : base verrouillée (mise à jour en cours ?) — sauté"
+  else
+    log "pacman : cache $(du -sh /var/cache/pacman/pkg 2>/dev/null | cut -f1) — pacman -Sc"
+    # restes de téléchargements interrompus : font râler pacman -Sc
+    run find /var/cache/pacman/pkg -maxdepth 1 -type d -name 'download-*' -mmin +60 -exec rm -rf -- {} +
+    run pacman -Sc --noconfirm >/dev/null
+  fi
+fi
+
+# --- 4. dumps Sonar -------------------------------------------------------
+if [[ -d "$SONAR_BACKUPS" ]]; then
+  for d in "$SONAR_BACKUPS"/*/; do
+    d="${d%/}"
+    [[ -L "$d" || ! -d "$d" ]] && continue
+    # dernier accès (lecture ou écriture) de n'importe quel fichier du dossier
+    last_s=$(find "$d" -type f -printf '%A@\n%T@\n' 2>/dev/null | sort -n | tail -1)
+    last_s="${last_s%.*}"; [[ -n "$last_s" ]] || last_s=0
+    age=$(( (now - last_s) / 86400 ))
+    if (( last_s > cutoff )); then
+      log "sonar : $(basename "$d") ($(du -sh "$d" | cut -f1)) utilisé il y a ${age} j — gardé"
+    else
+      log "sonar : $(basename "$d") ($(du -sh "$d" | cut -f1)) inutilisé depuis ${age} j — suppression"
+      run rm -rf -- "$d"
+    fi
+  done
+  # liens (ex. latest) qui pointaient vers un dossier supprimé
+  (( DRY_RUN )) || find "$SONAR_BACKUPS" -maxdepth 1 -xtype l -print -delete
+else
+  log "sonar : $SONAR_BACKUPS absent — sauté"
+fi
+
+after=$(freed_root)
+(( DRY_RUN )) || log "libéré sur / : $(( (after - before) / 1024 / 1024 )) Mo"
