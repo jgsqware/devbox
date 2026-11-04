@@ -83,7 +83,9 @@ cap of `review` does not apply to this list.
 
 ## 5. Images and versions
 
-- No unpinned image (`busybox`, `:latest`): pin a tag or a digest.
+- No unpinned image (`busybox`, `:latest`): pin a tag, or `tag@sha256:…` for
+  an exact build. Never a digest alone in CI: the Gaming1 runner's Kyverno
+  policy needs a tag and fails the job in 1 s (`Unknown key "tag"`).
 - A tag is mutable: when the exact build matters (rollback, restore), record
   and use the **digest**.
 
