@@ -55,6 +55,35 @@ _bw_clip() {
   fi
 }
 
+# écran de chargement : spinner + temps écoulé sur le terminal (rien si
+# stderr n'est pas un terminal). Aucun secret ne passe par lui.
+# Écrit sur /dev/tty : le 2>/dev/null qui masque « [1] 12345 » vaut aussi
+# pour le sous-shell.
+_bw_spin_start() {
+  [[ -t 2 ]] || return 0
+  local msg="$1"
+  { (
+      trap 'exit 0' TERM
+      f=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) i=0 t0=$SECONDS
+      printf '\e[?25l' >/dev/tty
+      while :; do
+        printf '\r\e[K  \e[36m%s\e[0m 🔐 %s \e[2m%ds\e[0m' "${f[i++ % 10]}" "$msg" $((SECONDS - t0)) >/dev/tty
+        sleep 0.08
+      done
+    ) & } 2>/dev/null
+  _BW_SPIN_PID=$!
+  disown "$_BW_SPIN_PID" 2>/dev/null
+  trap '_bw_spin_stop; trap - INT; return 130' INT
+}
+_bw_spin_stop() {
+  [[ -n "${_BW_SPIN_PID:-}" ]] || return 0
+  kill "$_BW_SPIN_PID" 2>/dev/null
+  while kill -0 "$_BW_SPIN_PID" 2>/dev/null; do sleep 0.02; done
+  unset _BW_SPIN_PID
+  printf '\r\e[K\e[?25h' >&2
+  trap - INT
+}
+
 # bws [recherche] — liste fzf : nom · utilisateur · dossier · URL, aperçu à droite
 #   Entrée   copie le mot de passe     ctrl-u   copie l'utilisateur
 #   ctrl-t   copie le code TOTP (2FA)  ctrl-o   copie l'URL
@@ -65,8 +94,22 @@ bws() {
   [[ -n "${BW_SESSION:-}" || -r "$_BW_SESSION_FILE" ]] || bwu || return 1
 
   local items folders view
-  items="$(bw list items ${1:+--search "$*"})" || { echo "❌ bw list a échoué (coffre verrouillé ? → bwu)" >&2; return 1; }
-  folders="$(bw list folders 2>/dev/null || echo '[]')"
+  # --nointeraction : une clé périmée fait échouer bw au lieu d'afficher
+  # « Master password: » sous le spinner → on déverrouille puis on relance
+  _bw_spin_start "Chargement du coffre${1:+ « $* »}…"
+  items="$(bw list items --nointeraction ${1:+--search "$*"} 2>/dev/null)"
+  local rc=$?
+  _bw_spin_stop
+  if (( rc )); then
+    bwu || return 1
+    _bw_spin_start "Chargement du coffre${1:+ « $* »}…"
+    items="$(bw list items --nointeraction ${1:+--search "$*"} 2>/dev/null)"; rc=$?
+    _bw_spin_stop
+    (( rc )) && { echo "❌ bw list a échoué" >&2; return 1; }
+  fi
+  _bw_spin_start "Dossiers…"
+  folders="$(bw list folders --nointeraction 2>/dev/null || echo '[]')"
+  _bw_spin_stop
   view="$(umask 077; mktemp "${XDG_RUNTIME_DIR:-$HOME/.cache}/bws.XXXXXX")" || return 1
 
   # copie sans secrets, dossiers résolus en noms
