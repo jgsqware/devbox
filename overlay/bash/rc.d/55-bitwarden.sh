@@ -38,20 +38,29 @@ bw() {
 }
 
 # copie dans le presse-papier, puis le vide au bout de 30 s.
-#   pbcopy d'abord (OrbStack : presse-papier du Mac en direct, marche même
-#   quand le terminal est fermé — pane flottant Rex) ; sinon clip de
-#   50-tmux.sh (OSC 52 via le terminal, marche en SSH).
+#   tmux             → clip (50-tmux.sh : load-buffer -w)
+#   Rex, SSH…        → OSC 52 sur le terminal : arrive sur la machine qui
+#                      AFFICHE le terminal (le Mac du client Rex)
+#   terminal local   → pbcopy (OrbStack : presse-papier du Mac hôte, qui
+#   sans SSH/Rex       n'est pas forcément celui devant lequel on est)
+# Effacement : sur BWS_CLEAR_TTY s'il est donné (pane d'origine d'un pane
+# flottant, qui se ferme avant les 30 s), sinon sur ce terminal.
+_bw_osc52() { printf '\e]52;c;%s\a' "$(printf '%s' "$1" | base64 | tr -d '\n')"; }
 _bw_clip() {
-  local v="$1"
-  if command -v pbcopy >/dev/null; then
+  local v="$1" tty
+  tty="$(tty 2>/dev/null)"
+  if [[ -n "${TMUX:-}" ]] && declare -F clip >/dev/null; then
+    printf '%s' "$v" | clip
+    ( ( sleep 30; printf ' ' | clip ) >/dev/null 2>&1 & )   # double fork : pas de « [1] 12345 »
+  elif [[ "${TERM_PROGRAM:-}" == rex || -n "${SSH_TTY:-}" ]] || ! command -v pbcopy >/dev/null; then
+    [[ -w "$tty" ]] || { echo "❌ pas de terminal pour copier" >&2; return 1; }
+    _bw_osc52 "$v" > "$tty"
+    local ct="${BWS_CLEAR_TTY:-$tty}" seq
+    seq="$(_bw_osc52 ' ')"
+    setsid -f sh -c 'sleep 30; [ -w "$1" ] && printf "%s" "$2" > "$1"' sh "$ct" "$seq" >/dev/null 2>&1 </dev/null
+  else
     printf '%s' "$v" | pbcopy
     setsid -f sh -c 'sleep 30; printf "" | pbcopy' >/dev/null 2>&1 </dev/null
-  elif declare -F clip >/dev/null; then
-    printf '%s' "$v" | clip
-    # double fork : pas de « [1] 12345 » affiché par le shell interactif
-    ( ( sleep 30; printf ' ' | clip ) >/dev/null 2>&1 & )
-  else
-    echo "❌ pas de presse-papier (pbcopy / clip)" >&2; return 1
   fi
 }
 
