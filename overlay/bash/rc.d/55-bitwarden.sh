@@ -37,15 +37,22 @@ bw() {
   command bw "$@"
 }
 
-# copie dans le presse-papier (clip de 50-tmux.sh : OSC 52, marche en SSH),
-# puis le vide au bout de 30 s
+# copie dans le presse-papier, puis le vide au bout de 30 s.
+#   pbcopy d'abord (OrbStack : presse-papier du Mac en direct, marche même
+#   quand le terminal est fermé — pane flottant Rex) ; sinon clip de
+#   50-tmux.sh (OSC 52 via le terminal, marche en SSH).
 _bw_clip() {
   local v="$1"
-  if declare -F clip >/dev/null; then printf '%s' "$v" | clip
-  elif command -v pbcopy >/dev/null; then printf '%s' "$v" | pbcopy
-  else echo "❌ pas de presse-papier (clip / pbcopy)" >&2; return 1; fi
-  # double fork : pas de « [1] 12345 » affiché par le shell interactif
-  ( ( sleep 30; if declare -F clip >/dev/null; then printf ' ' | clip; else printf ' ' | pbcopy; fi ) >/dev/null 2>&1 & )
+  if command -v pbcopy >/dev/null; then
+    printf '%s' "$v" | pbcopy
+    setsid -f sh -c 'sleep 30; printf "" | pbcopy' >/dev/null 2>&1 </dev/null
+  elif declare -F clip >/dev/null; then
+    printf '%s' "$v" | clip
+    # double fork : pas de « [1] 12345 » affiché par le shell interactif
+    ( ( sleep 30; printf ' ' | clip ) >/dev/null 2>&1 & )
+  else
+    echo "❌ pas de presse-papier (pbcopy / clip)" >&2; return 1
+  fi
 }
 
 # bws [recherche] — liste fzf : nom · utilisateur · dossier · URL, aperçu à droite
