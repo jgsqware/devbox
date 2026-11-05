@@ -1,0 +1,16 @@
+# devbox — ~/.bash_profile sur un hôte macOS (posé par macos/bootstrap.sh).
+# Ghostty et Rex ouvrent un shell de LOGIN : on pose ici le PATH (Homebrew,
+# mise, ~/.local/bin) AVANT ~/.bashrc, pour que la chaîne Omarchy y trouve
+# mise, starship, zoxide et fzf.
+#
+# ⛔ NE RIEN ÉDITER ICI : redéployé depuis le dépôt devbox.
+
+[[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
+
+for _p in "$HOME/go/bin" "$HOME/.local/share/mise/shims" "$HOME/.local/bin"; do
+  case ":$PATH:" in *":$_p:"*) ;; *) [[ -d "$_p" ]] && PATH="$_p:$PATH" ;; esac
+done
+unset _p
+export PATH
+
+[[ -f ~/.bashrc ]] && . ~/.bashrc

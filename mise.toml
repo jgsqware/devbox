@@ -56,3 +56,7 @@ run = "./upgrade.sh"
 [tasks.warp-reauth]
 description = "ré-authentifie WARP sur l'hôte distant, puis teste GitLab (couche privée)"
 run = """bash -c 'source overlay/bash/rc.d/90-private.sh; declare -F warp-reauth >/dev/null || { echo "warp-reauth absent : couche privée non clonée (mise run bootstrap)" >&2; exit 1; }; warp-reauth "$@"' warp-reauth"""
+
+[tasks.macos-scripts-install]
+description = "macOS : installe seulement les configs d'apps et les scripts (aerospace, rex, raycast, ghostty-theme)"
+run = "./macos/bootstrap.sh --only apps"

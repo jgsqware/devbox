@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+# Hôte macOS (MacBook Air, Mac mini) : même shell, autre script.
+[[ "$(uname -s)" == Darwin ]] && exec "$(dirname "${BASH_SOURCE[0]}")/macos/bootstrap.sh" "$@"
+
 VERSION="0.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"

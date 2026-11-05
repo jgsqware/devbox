@@ -90,6 +90,38 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `hooks/post-commit` | après un commit sur `main` : push + `sync-fleet.sh` en arrière-plan (`mise run hooks` pour l'activer) |
 | `hooks/pre-commit` | **anti-fuite** : refuse un commit qui ajoute un motif de la `denylist` privée (voir « Couche privée ») |
 
+## Hôte macOS (MacBook Air, Mac mini)
+
+Même shell que les devbox Linux, directement sur macOS, **sans chezmoi** :
+`./bootstrap.sh` (ou `mise run bootstrap`) renvoie de lui-même vers
+`macos/bootstrap.sh` quand il tourne sur Darwin.
+
+```
+brew (macos/Brewfile) ─▶ mise (macos/mise.toml) ─▶ moteur Omarchy vendoré
+  ─▶ ~/.bashrc commun + ~/.bash_profile macOS + rc.d ─▶ apps ─▶ chsh bash 5
+```
+
+| Élément | Où | Installé comme |
+|---|---|---|
+| shell | `overlay/bash/*` + `macos/bash/bash_profile` | copie |
+| corrections macOS de la chaîne Omarchy (`open`, fzf Ctrl-T/Alt-C, bash-completion, `sff`) | `overlay/bash/rc.d/15-macos.sh` | copie (sans effet sur Linux) |
+| AeroSpace | `macos/aerospace/aerospace.toml` | **lien** vers le dépôt |
+| Rex | `macos/rex/init.lua` | **lien** |
+| Raycast (script commands) | `macos/raycast/scripts/` | **lien** — ajouter le dossier une fois dans Raycast |
+| `brave-ms-app` | `macos/bin/` | **lien** dans `~/.local/bin` |
+| `omarchy-ghostty-theme` | `macos/` | copie (son `self-update` se réécrit) |
+
+Les liens font qu'une modif faite sur le Mac atterrit directement dans le dépôt : il reste à la commiter.
+Les dotfiles chezmoi (`.zshenv`, `.zshrc`, `.zprofile`, `.profile`) sont rangés dans
+`~/.local/state/devbox/backup/<date>/`, rien n'est supprimé. Le `config.json` de Raycast
+(tokens) et ses extensions ne sont **pas** versionnés : utiliser Raycast Cloud Sync ou
+l'export `.rayconfig`.
+
+```bash
+./macos/bootstrap.sh -n              # dry-run
+./macos/bootstrap.sh --only apps     # seulement les configs d'apps (= mise run macos-scripts-install)
+```
+
 ## Thèmes Omarchy dans Ghostty sur macOS
 
 `macos/omarchy-ghostty-theme` fait pour Ghostty sur le Mac ce que

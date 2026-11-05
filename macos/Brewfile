@@ -1,0 +1,13 @@
+# devbox — paquets Homebrew d'un hôte macOS (macos/bootstrap.sh, étape brew).
+# Les outils CLI (starship, fzf, zoxide…) viennent de mise : macos/mise.toml.
+
+brew "bash"                # bash 5 : la chaîne Omarchy et les rc.d ont besoin de bash ≥ 4
+brew "bash-completion@2"
+brew "mosh"
+brew "btop"
+
+tap "nikitabobko/tap"
+cask "nikitabobko/tap/aerospace"
+cask "raycast"
+cask "ghostty"
+cask "font-caskaydia-mono-nerd-font"

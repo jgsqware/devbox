@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# brave-ms-app — ouvre ou focus une app M365 dans une instance Brave dédiée
+# UA Linux, profil persistant partagé (un seul login SSO pour toutes les apps)
+# usage: brave-ms-app <teams|outlook>
+set -euo pipefail
+
+APP="${1:?usage: brave-ms-app <teams|outlook>}"
+case "$APP" in
+  teams)   URL="https://teams.cloud.microsoft/";        MATCH="Teams" ;;
+  outlook) URL="https://outlook.cloud.microsoft/mail/"; MATCH="Outlook" ;;
+  *) echo "app inconnue: $APP" >&2; exit 1 ;;
+esac
+
+BRAVE_APP="Brave Browser"
+BRAVE_BIN="/Applications/${BRAVE_APP}.app/Contents/MacOS/${BRAVE_APP}"
+# Même profil qu'avant → la session Teams déjà ouverte est conservée
+PROFILE="${HOME}/Library/Application Support/BraveLinuxTeams"
+
+# Process principal de l'instance dédiée (le plus ancien portant ce profil)
+PID="$(pgrep -o -f -- "--user-data-dir=${PROFILE}" || true)"
+
+focus_process() {
+  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is ${PID}) to true" 2>/dev/null || true
+}
+
+if [[ -n "$PID" ]]; then
+  # Cherche une fenêtre existante de cette app (par titre), la dé-minimise et la ramène devant
+  FOUND="$(osascript <<EOF 2>/dev/null || echo no
+tell application "System Events"
+  set p to first process whose unix id is ${PID}
+  repeat with w in windows of p
+    if name of w contains "${MATCH}" then
+      try
+        set value of attribute "AXMinimized" of w to false
+      end try
+      perform action "AXRaise" of w
+      set frontmost of p to true
+      return "yes"
+    end if
+  end repeat
+end tell
+return "no"
+EOF
+)"
+  if [[ "$FOUND" == "yes" ]]; then
+    echo "${MATCH} au premier plan"
+    exit 0
+  fi
+
+  # Instance vivante mais pas de fenêtre pour cette app → le singleton Chromium l'ouvre dans l'instance existante
+  "$BRAVE_BIN" --user-data-dir="$PROFILE" --app="$URL" >/dev/null 2>&1 &
+  disown
+  sleep 0.5
+  focus_process
+  echo "${MATCH} ouvert"
+  exit 0
+fi
+
+# Premier lancement de l'instance
+MAJOR="$("$BRAVE_BIN" --version 2>/dev/null | awk '{print $3}' | cut -d. -f1)"
+MAJOR="${MAJOR:-141}"
+UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${MAJOR}.0.0.0 Safari/537.36"
+
+open -na "$BRAVE_APP" --args \
+  --user-data-dir="$PROFILE" \
+  --user-agent="$UA" \
+  --no-first-run \
+  --no-default-browser-check \
+  --restore-last-session \
+  --app="$URL"
+
+echo "${MATCH} lancé (UA Linux)"

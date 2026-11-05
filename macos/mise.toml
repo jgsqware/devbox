@@ -1,0 +1,16 @@
+# devbox — outils CLI d'un hôte macOS, posé dans ~/.config/mise/conf.d/devbox-macos.toml
+# par macos/bootstrap.sh. Ce sont les outils que la chaîne Omarchy et les rc.d appellent.
+[tools]
+starship = "latest"
+fzf = "latest"
+zoxide = "latest"
+atuin = "latest"
+eza = "latest"
+bat = "latest"
+fd = "latest"
+ripgrep = "latest"
+neovim = "latest"
+jq = "latest"
+lazygit = "latest"
+tmux = "latest"
+node = "lts"
