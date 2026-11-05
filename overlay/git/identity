@@ -2,13 +2,35 @@
 # ~/.config/git/config appartient à Omarchy (réécrit par bootstrap) : rien ici.
 #
 # Défaut : projets perso. Dépôts dont un remote pointe sur le GitLab IBA
-# (gitee / gitlab.sw.iba.net, https ou ssh) : identité IBA.
+# (gitee / gitlab, sw.goiba.net ou sw.iba.net, https ou ssh, alias ssh
+# "gitee") : identité IBA. gitee refuse tout email hors @iba-group.com.
 # Vérifier dans un dépôt : git config user.email
 
 [user]
 	name = Julien Garcia Gonzalez
 	email = julien@jgsquare.io
 
+# gitee.sw.goiba.net / gitlab.sw.goiba.net (domaine actuel)
+[includeIf "hasconfig:remote.*.url:https://gitee.sw.goiba.net/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:git@gitee.sw.goiba.net:*/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:ssh://git@gitee.sw.goiba.net/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:https://gitlab.sw.goiba.net/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:git@gitlab.sw.goiba.net:*/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:ssh://git@gitlab.sw.goiba.net/**"]
+	path = identity-iba
+
+# alias ssh "gitee" (~/.ssh/config : Host gitee)
+[includeIf "hasconfig:remote.*.url:git@gitee:*/**"]
+	path = identity-iba
+[includeIf "hasconfig:remote.*.url:ssh://git@gitee/**"]
+	path = identity-iba
+
+# ancien domaine sw.iba.net
 [includeIf "hasconfig:remote.*.url:https://gitee.sw.iba.net/**"]
 	path = identity-iba
 [includeIf "hasconfig:remote.*.url:git@gitee.sw.iba.net:*/**"]

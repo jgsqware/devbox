@@ -1,3 +1,4 @@
 # devbox — identité pour le GitLab IBA (cf. identity).
+# gitee (pre-receive hook) n'accepte que @iba-group.com.
 [user]
-	email = ajeoy@goiba.net
+	email = julien.garciagonzalez@iba-group.com
