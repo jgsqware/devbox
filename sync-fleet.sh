@@ -6,7 +6,8 @@
 #
 #   ./sync-fleet.sh              toutes les machines tag:omarchy
 #   ./sync-fleet.sh mini iba     seulement celles-là (noms tailnet)
-#   DEVBOX_SYNC_EXCLUDE="a b"    machines exclues (défaut : obsidian-mcp)
+#   DEVBOX_SYNC_EXCLUDE="a b*"   machines exclues, jokers * acceptés
+#                                (défaut : *-mcp jgsquare-nas homeassistant omarchy — pas/plus des devbox ; omarchy remplacé par dev)
 #   DEVBOX_SYNC_SELF=0           ne pas rejouer le bootstrap sur cette machine
 #   mise run sync
 #
@@ -24,8 +25,9 @@ set -uo pipefail
 TAG="${DEVBOX_SYNC_TAG:-tag:omarchy}"
 REMOTE_USER="${DEVBOX_USER:-jgsqware}"
 TIMEOUT="${DEVBOX_SYNC_TIMEOUT:-30m}"                  # par hôte
-# taguées tag:omarchy mais PAS des devbox à resynchroniser (noms courts, espaces)
-EXCLUDE="${DEVBOX_SYNC_EXCLUDE-obsidian-mcp}"
+# taguées tag:omarchy mais PAS des devbox à resynchroniser (noms courts,
+# espaces, * = n'importe quoi) : serveurs MCP sans SSH, NAS, domotique
+EXCLUDE="${DEVBOX_SYNC_EXCLUDE-*-mcp jgsquare-nas homeassistant omarchy}"
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/devbox/sync/$(date +%Y%m%d-%H%M%S)"
 
 command -v tailscale >/dev/null && command -v jq >/dev/null \
@@ -38,9 +40,9 @@ else
   (( ${DEVBOX_SYNC_SELF:-1} )) && SELF="$(tailscale status --self --json | jq -r --arg tag "$TAG" '
     .Self | select((.Tags // []) | index($tag)) | .DNSName | rtrimstr(".")')"
   mapfile -t hosts < <(tailscale status --json | jq -r --arg tag "$TAG" --arg ex "$EXCLUDE" '
-    ($ex | split(" ") | map(select(. != ""))) as $skip
+    ($ex | split(" ") | map(select(. != "") | "^" + gsub("\\*"; ".*") + "$")) as $skip
     | .Peer[] | select(.Online and ((.Tags // []) | index($tag)))
-    | .DNSName | rtrimstr(".") | select((split(".")[0]) as $n | $skip | index($n) | not)')
+    | .DNSName | rtrimstr(".") | select((split(".")[0]) as $n | $skip | any(. as $re | $n | test($re)) | not)')
 fi
 [[ -n "$SELF" ]] && hosts+=("$SELF")
 (( ${#hosts[@]} )) || { echo "aucune machine $TAG en ligne"; exit 0; }

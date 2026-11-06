@@ -1723,9 +1723,34 @@ WantedBy=default.target"
   fi
 }
 
+# VM OrbStack : /etc/resolv.conf est à l'origine un lien vers le resolver du
+# Mac (/opt/orbstack-guest/etc/resolv.conf). tailscaled le remplace par son
+# propre fichier ; au démarrage suivant il voit ce fichier + le `resolvconf`
+# de systemd-resolvconf (sans systemd-resolved) et passe en mode "openresolv",
+# qui échoue → aucun DNS amont, plus rien ne se résout hors tailnet (vu sur
+# mini). Remettre le lien avant chaque démarrage le garde en mode "direct".
+TS_ORB_DROPIN=/etc/systemd/system/tailscaled.service.d/orbstack-dns.conf
+fix_orbstack_dns() {
+  local orb=/opt/orbstack-guest/etc/resolv.conf
+  [[ -e "$orb" ]] || return 0
+  local conf="[Service]
+# devbox : resolv.conf ← resolver OrbStack avant démarrage (sinon mode openresolv cassé)
+ExecStartPre=-/usr/bin/ln -sfn $orb /etc/resolv.conf"
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait $TS_ORB_DROPIN (resolv.conf OrbStack avant tailscaled)"
+    return 0
+  fi
+  [[ "$(cat "$TS_ORB_DROPIN" 2>/dev/null)" == "$conf" ]] && { ok "DNS OrbStack : drop-in tailscaled déjà posé"; return 0; }
+  asroot mkdir -p "$(dirname "$TS_ORB_DROPIN")"
+  printf '%s\n' "$conf" | asroot tee "$TS_ORB_DROPIN" >/dev/null
+  asroot systemctl daemon-reload
+  ok "DNS OrbStack : drop-in tailscaled posé (effet au prochain démarrage de tailscaled)"
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   has tailscale || die "tailscale non installé (étape ③)."
+  fix_orbstack_dns
   asroot systemctl enable --now tailscaled
 
   # opérateur/ssh/tag/cleanup sont idempotents : à rejouer à CHAQUE run dès
@@ -2099,7 +2124,11 @@ do_verify() {
   (( full )) && check "nvim démarre proprement" "nvim --headless +qa 2>&1 && echo 'exit 0'"
   # verrous/sockets runtime d'applis de bureau (Chromium Singleton*, pulse
   # *-runtime) : liens morts par nature dès que l'appli est fermée — pas un défaut.
-  check "aucun lien cassé"        "test -z \"\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l -not -name 'Singleton*' -not -name '*-runtime' 2>/dev/null)\" && echo '0 lien mort'"
+  # mise garde un lien par config chargée/approuvée : projets supprimés et
+  # scratchpads /tmp en laissent des morts en continu → on les oublie d'abord.
+  (( DRY_RUN )) || { has mise && mise prune --configs >/dev/null 2>&1; }
+  # en échec : nombre + premier lien mort (sinon la ligne ❌ reste muette)
+  check "aucun lien cassé"        "l=\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l -not -name 'Singleton*' -not -name '*-runtime' 2>/dev/null); test -z \"\$l\" && echo '0 lien mort' || { echo \"\$(wc -l <<<\"\$l\") : \${l#\$HOME/}\" | head -1; false; }"
   (( full )) && check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has atuin     && check "atuin"                "atuin --version"
   (( full )) && has zellij && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
