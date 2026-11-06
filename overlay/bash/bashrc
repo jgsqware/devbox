@@ -18,6 +18,12 @@ esac
 # Non interactif : on s'arrête ici (OMARCHY_PATH et PATH sont posés).
 [[ $- != *i* ]] && return
 
+# macOS : /bin/bash est un bash 3.2 que la chaîne Omarchy ne sait pas lire
+# ([[ -v ]], declare -g, complete -I). On bascule sur le bash 5 de Homebrew.
+if (( BASH_VERSINFO[0] < 4 )) && [[ -x /opt/homebrew/bin/bash ]]; then
+  if shopt -q login_shell; then exec -l /opt/homebrew/bin/bash; else exec /opt/homebrew/bin/bash; fi
+fi
+
 # La chaîne Omarchy : envs · shell · aliases · functions · init
 # (init = mise, starship, zoxide, fzf) · inputrc
 [[ -r "$OMARCHY_PATH/default/bash/rc" ]] && source "$OMARCHY_PATH/default/bash/rc"
