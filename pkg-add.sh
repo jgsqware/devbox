@@ -263,7 +263,10 @@ if (( ${#to_install[@]} )) && ! sudo pacman -S --needed --noconfirm "${to_instal
       && sudo pacman -Su --needed --noconfirm "${to_install[@]}"; } \
     || die "pacman a échoué (système peut-être déjà en partie mis à jour) — rien n'a été ajouté à la liste"
 fi
+# base-devel (make, debugedit…) : makepkg en a besoin et yay, venu en binaire
+# du dépôt omarchy, ne l'a pas tiré — sans lui « Cannot find the debugedit binary ».
 (( ${#aur_install[@]} )) && { has yay || die "yay absent — mise run bootstrap"
+                              sudo pacman -S --needed --noconfirm base-devel || die "base-devel introuvable — rien n'a été ajouté"
                               yay -S --needed --noconfirm "${aur_install[@]}" || die "yay a échoué — rien n'a été ajouté"; }
 (( ${#to_install[@]} + ${#aur_install[@]} )) && ok "installé sur $(hostname)"
 

@@ -865,6 +865,9 @@ do_packages() {
   # yay lui-même que pour le `pacman -U` final.
   if (( ${#AUR_PACKAGES[@]} )); then
     has yay || bootstrap_yay_from_source
+    # base-devel (make, debugedit…) : yay binaire (dépôt omarchy) ne le tire
+    # pas, et makepkg échoue sans lui (« Cannot find the debugedit binary »).
+    asroot pacman -S --needed --noconfirm base-devel || warn "base-devel indisponible — builds AUR compromis"
     local a
     for a in "${AUR_PACKAGES[@]}"; do
       if pacman -Qq "$a" >/dev/null 2>&1; then
