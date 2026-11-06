@@ -254,7 +254,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
             (+ serveur Rex sur l'IP tailnet, port 7297 — --no-rex pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
-  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
+  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, brag, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
   moshi     moshi-hook (getmoshi.app) : binaire, pairing (token de la couche privée), hooks agents, service systemd user
   cleanup   timer quotidien devbox-cleanup : VMs Incus *-sim arrêtées depuis 2 j, images Docker
             inutilisées, cache pacman, dumps Sonar non lus depuis 2 j
@@ -1833,7 +1833,7 @@ do_claude_plugins() {
   has claude || { skip "claude absent — plugins sautés"; return 0; }
   # Format : "<plugin>@<marketplace> <source github>"
   local p id mkt src
-  for p in "adhd@adhd UditAkhourii/adhd" "tmux-agent-sidebar@hiroppy hiroppy/tmux-agent-sidebar"; do
+  for p in "adhd@adhd UditAkhourii/adhd" "tmux-agent-sidebar@hiroppy hiroppy/tmux-agent-sidebar" "brag@brag latent-spaces/brag"; do
     read -r id src <<<"$p"; mkt="${id#*@}"
     if (( DRY_RUN )); then
       info "claude plugin install $id (dry-run, non exécuté)"
@@ -2131,6 +2131,7 @@ do_verify() {
   has gh     && check "gh authentifié"    "gh auth status >/dev/null 2>&1 && gh auth status 2>&1 | grep -o 'Logged in to [^ ]* as [^ ]*' | head -1"
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
+  has claude && check "plugin claude brag" "claude plugin list 2>/dev/null | grep -q '❯ brag@brag\$'"
   has tmux   && check "tmux-agent-sidebar"  "\"\$HOME/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar\" version && grep -qxF 'source-file -q ~/.config/tmux/devbox.conf' \"\$HOME/.config/tmux/tmux.conf\""
   has claude && check "plugin claude you-should-know" "grep -q '\"cc-plugin-you-should-know@builtin\": *true' \"\$HOME/.claude/settings.json\" && echo activé"
   for _sk in "$OVERLAY_DIR"/claude/skills/*/; do
