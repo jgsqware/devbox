@@ -1113,8 +1113,9 @@ EOF
 # Déclare aussi node (LTS) globalement : sans version globale, le shim mise
 # `node` échoue hors projet (« No version is set for shim: node ») et casse
 # les hooks Claude Code qui l'appellent.
-# Et hush (github.com/jgsqware/hush, sortie Ansible lisible) via le backend
-# go: de mise — pas encore de release GitHub — d'où go déclaré aussi.
+# Et hush (github.com/jgsqware/hush, sortie Ansible lisible) et flw
+# (github.com/jgsqware/flw, TUI GitLab sur glab) via le backend go: de mise
+# — pas encore de release GitHub — d'où go déclaré aussi.
 # `mise up` (upgrade.sh) le suit sur le dernier commit de main.
 install_mise_global_tasks() {
   local f="${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/devbox.toml" want
@@ -1123,6 +1124,7 @@ install_mise_global_tasks() {
 node = \"lts\"
 go = \"latest\"
 \"go:github.com/jgsqware/hush/cmd/hush\" = \"latest\"
+\"go:github.com/jgsqware/flw\" = \"latest\"
 
 [tasks.pkg-add]
 description = \"devbox : cherche, installe, ajoute à packages.txt, commite, pousse, resync la flotte\"
@@ -1139,6 +1141,8 @@ file = \"$SCRIPT_DIR/pkg-add.sh\""
     run mise install node@lts && ok "node LTS global (mise)" || warn "mise install node@lts a échoué"
     run mise install go@latest && run mise install go:github.com/jgsqware/hush/cmd/hush@latest \
       && ok "hush global (mise, go install)" || warn "installation de hush (mise) échouée"
+    run mise install go:github.com/jgsqware/flw@latest \
+      && ok "flw global (mise, go install)" || warn "installation de flw (mise) échouée"
   fi
 }
 
