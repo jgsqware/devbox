@@ -194,6 +194,66 @@ do_apps() {
   ok "omarchy-ghostty-theme → ~/.local/bin"
   info "Raycast : la première fois, Settings → Extensions → Script Commands → Add Directory → ~/.config/raycast/scripts"
   has aerospace && ! (( DRY_RUN )) && aerospace reload-config >/dev/null 2>&1 && ok "AeroSpace rechargé"
+  brave_profiles
+}
+
+# Profils du Brave principal, nommés — même table que
+# raycast/scripts/lib/brave-profile.sh (dossier:nom affiché). Sans ça, sur une
+# install neuve, `--profile-directory=Profile 1` crée un profil vierge "Person 2".
+BRAVE_PROFILES="Default:Gaming1 Profile_1:Iba"   # _ = espace — wk : instance à part (brave-wk.sh)
+BRAVE_DATA="$HOME/Library/Application Support/BraveSoftware/Brave-Browser"
+brave_profiles() {
+  [[ -d "/Applications/Brave Browser.app" ]] || { skip "Brave non installé — profils non créés"; return 0; }
+  # Brave réécrit Local State en quittant : toute modif faite pendant qu'il tourne est perdue
+  if pgrep -f '/Brave Browser.app/Contents/MacOS/Brave Browser' >/dev/null; then
+    warn "Brave tourne — quitte-le puis : ./macos/bootstrap.sh --only apps (profils Brave)"
+    return 0
+  fi
+  if (( DRY_RUN )); then info "[dry-run] profils Brave : $BRAVE_PROFILES"; return 0; fi
+  mkdir -p "$BRAVE_DATA" 2>/dev/null && ls "$BRAVE_DATA" >/dev/null 2>&1 || {
+    warn "accès refusé à $BRAVE_DATA — Réglages → Confidentialité → Accès complet au disque pour le terminal"
+    return 0
+  }
+  local out
+  out="$(/usr/bin/python3 - "$BRAVE_DATA" $BRAVE_PROFILES <<'PY'
+import json, os, sys
+data, specs = sys.argv[1], [s.split(":", 1) for s in sys.argv[2:]]
+
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except FileNotFoundError: return {}
+
+def save(p, d):
+    tmp = p + ".devbox"
+    with open(tmp, "w") as f: json.dump(d, f)
+    os.replace(tmp, p)
+
+ls_path = os.path.join(data, "Local State")
+ls = load(ls_path)
+prof = ls.setdefault("profile", {})
+cache = prof.setdefault("info_cache", {})
+order = prof.setdefault("profiles_order", [])
+changed = []
+for d, name in specs:
+    d = d.replace("_", " ")
+    os.makedirs(os.path.join(data, d), exist_ok=True)
+    pp = os.path.join(data, d, "Preferences")
+    pref = load(pp)
+    if pref.get("profile", {}).get("name") != name:
+        pref.setdefault("profile", {})["name"] = name
+        save(pp, pref)
+        changed.append(name)
+    e = cache.setdefault(d, {})
+    if e.get("name") != name or e.get("is_using_default_name", True):
+        e.update(name=name, is_using_default_name=False)
+        changed.append(name)
+    if d not in order: order.append(d)
+save(ls_path, ls)
+print(" ".join(dict.fromkeys(changed)))
+PY
+)" || { warn "profils Brave : échec (voir ci-dessus)"; return 0; }
+  [[ -n "$out" ]] && ok "profils Brave nommés : $out" || ok "profils Brave déjà en place (Gaming1 · Iba)"
 }
 
 # ============================================================= chezmoi ====

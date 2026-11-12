@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Moteur partagé : ouvre une fenêtre d'un profil du Brave PRINCIPAL (data-dir par défaut).
 # Pas une commande Raycast (aucune métadonnée @raycast).
-# Usage: brave-profile.sh <iba|gaming1|wk>
+# Usage: brave-profile.sh <iba|gaming1>   (wk = instance à part, UA Linux : brave-wk.sh)
 set -euo pipefail
 case "${1:-}" in
   gaming1) dir="Default"   ;;   # nom affiché : Gaming1
   iba)     dir="Profile 1" ;;   # nom affiché : Iba
-  wk)      dir="Profile 2" ;;   # nom affiché : wk
-  *) echo "brave-profile: profil inconnu '${1:-}' (iba|gaming1|wk)" >&2; exit 1 ;;
+  *) echo "brave-profile: profil inconnu '${1:-}' (iba|gaming1)" >&2; exit 1 ;;
 esac
 BRAVE_BIN="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 # Instance principale = process Brave lancé SANS --user-data-dir (ignore iba/gaming1 SOCKS + M365)
