@@ -1751,10 +1751,51 @@ ExecStartPre=-/usr/bin/ln -sfn $orb /etc/resolv.conf"
   ok "DNS OrbStack : drop-in tailscaled posé (effet au prochain démarrage de tailscaled)"
 }
 
+# VM OrbStack sur un Mac sous WARP : tailscaled sonde en direct (UDP) les IP
+# locales annoncées par les peers (ex. 10.13.228.1 = bridge de wk). Côté Mac
+# elles partent dans WARP, tombent sur une appli Access privée gaming1 et
+# ouvrent une popup "identity_denied" à chaque sonde. Le chemin direct est de
+# toute façon impossible (relais DERP) : on jette l'UDP sortant vers ces plages.
+TS_WARP_DENY=(${DEVBOX_TS_WARP_DENY:-10.13.228.0/24})
+TS_WARP_NFT=/etc/devbox/warp-guard.nft
+TS_WARP_DROPIN=/etc/systemd/system/tailscaled.service.d/warp-guard.conf
+guard_orbstack_warp() {
+  [[ -e /opt/orbstack-guest/etc/resolv.conf ]] || return 0
+  has nft || { warn "nft absent : sondes tailscale vers ${TS_WARP_DENY[*]} non bloquées"; return 0; }
+  local set; set="$(IFS=,; echo "${TS_WARP_DENY[*]}")"
+  # table dédiée, recréée à chaque chargement (le `table` vide rend le delete sûr)
+  local rules="table inet devbox_warp
+delete table inet devbox_warp
+table inet devbox_warp {
+  chain output {
+    type filter hook output priority 0; policy accept;
+    ip daddr { $set } meta l4proto udp counter drop comment \"tailscale -> WARP/Access\"
+  }
+}"
+  local conf="[Service]
+# devbox : UDP sortant vers ${TS_WARP_DENY[*]} jeté (popup Cloudflare Access via WARP du Mac)
+ExecStartPre=-/usr/bin/nft -f $TS_WARP_NFT"
+  if (( DRY_RUN )); then
+    info "[dry-run] écrirait $TS_WARP_NFT + $TS_WARP_DROPIN (UDP → ${TS_WARP_DENY[*]} jeté)"
+    return 0
+  fi
+  if [[ "$(cat "$TS_WARP_NFT" 2>/dev/null)" != "$rules" || "$(cat "$TS_WARP_DROPIN" 2>/dev/null)" != "$conf" ]]; then
+    asroot mkdir -p "$(dirname "$TS_WARP_NFT")" "$(dirname "$TS_WARP_DROPIN")"
+    printf '%s\n' "$rules" | asroot tee "$TS_WARP_NFT" >/dev/null
+    printf '%s\n' "$conf" | asroot tee "$TS_WARP_DROPIN" >/dev/null
+    asroot systemctl daemon-reload
+  fi
+  # chargé tout de suite aussi : pas besoin d'attendre un redémarrage de tailscaled
+  asroot nft -f "$TS_WARP_NFT" \
+    && ok "WARP : UDP sortant vers ${TS_WARP_DENY[*]} jeté (nft inet devbox_warp)" \
+    || warn "WARP : échec du chargement de $TS_WARP_NFT"
+}
+
 do_tailscale() {
   step "⑨" "Tailscale"
   has tailscale || die "tailscale non installé (étape ③)."
   fix_orbstack_dns
+  guard_orbstack_warp
   asroot systemctl enable --now tailscaled
 
   # opérateur/ssh/tag/cleanup sont idempotents : à rejouer à CHAQUE run dès
