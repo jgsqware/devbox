@@ -1752,11 +1752,15 @@ ExecStartPre=-/usr/bin/ln -sfn $orb /etc/resolv.conf"
 }
 
 # VM OrbStack sur un Mac sous WARP : tailscaled sonde en direct (UDP) les IP
-# locales annoncées par les peers (ex. 10.13.228.1 = bridge de wk). Côté Mac
-# elles partent dans WARP, tombent sur une appli Access privée gaming1 et
-# ouvrent une popup "identity_denied" à chaque sonde. Le chemin direct est de
-# toute façon impossible (relais DERP) : on jette l'UDP sortant vers ces plages.
-TS_WARP_DENY=(${DEVBOX_TS_WARP_DENY:-10.13.228.0/24})
+# locales annoncées par les peers (bridges docker/incus : 10.13.228.1 de wk,
+# 172.17–29.0.1 de node2…). Côté Mac elles partent dans WARP, tombent sur une
+# appli Access privée gaming1 et ouvrent une popup "identity_denied" à chaque
+# sonde. Le chemin direct est de toute façon impossible (relais DERP) : on jette
+# l'UDP sortant du port tailscaled vers les plages privées routées par WARP —
+# toutes, pas IP par IP (chaque peer en annonce d'autres). 192.168/16 (LAN
+# maison) reste ouvert ; le reste de la VM n'est pas concerné (filtre sport).
+TS_WARP_DENY=(${DEVBOX_TS_WARP_DENY:-10.0.0.0/8 172.16.0.0/12})
+TS_WARP_PORT="${DEVBOX_TS_PORT:-41641}"
 TS_WARP_NFT=/etc/devbox/warp-guard.nft
 TS_WARP_DROPIN=/etc/systemd/system/tailscaled.service.d/warp-guard.conf
 guard_orbstack_warp() {
@@ -1769,7 +1773,7 @@ delete table inet devbox_warp
 table inet devbox_warp {
   chain output {
     type filter hook output priority 0; policy accept;
-    ip daddr { $set } meta l4proto udp counter drop comment \"tailscale -> WARP/Access\"
+    ip daddr { $set } udp sport $TS_WARP_PORT counter drop comment \"tailscale -> WARP/Access\"
   }
 }"
   local conf="[Service]
