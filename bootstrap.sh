@@ -1144,9 +1144,14 @@ file = \"$SCRIPT_DIR/pkg-add.sh\""
     run mise install node@lts && ok "node LTS global (mise)" || warn "mise install node@lts a échoué"
     run mise install go@latest && run mise install go:github.com/jgsqware/hush/cmd/hush@latest \
       && ok "hush global (mise, go install)" || warn "installation de hush (mise) échouée"
+    # mise cache les releases de moins de 24 h (minimum_release_age) : tant
+    # que la release n'est pas éligible, l'install échoue et on GARDE l'ancien
+    # flw (go:) — il n'est retiré qu'une fois la release installée.
+    local flw_ok=0
     run mise install github:jgsqware/flw@latest \
-      && ok "flw global (mise, release GitHub)" || warn "installation de flw (mise) échouée"
-    if mise ls --installed go:github.com/jgsqware/flw 2>/dev/null | grep -q .; then
+      && { flw_ok=1; ok "flw global (mise, release GitHub)"; } \
+      || warn "installation de flw (mise) échouée — release < 24 h ? l'ancien flw reste"
+    if (( flw_ok )) && mise ls --installed go:github.com/jgsqware/flw 2>/dev/null | grep -q .; then
       run mise uninstall --all go:github.com/jgsqware/flw \
         && ok "ancien flw (go install) retiré" || warn "désinstallation de l'ancien flw (go:) échouée"
     fi
