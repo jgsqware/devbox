@@ -3,6 +3,7 @@
 
 brew "bash"                # bash 5 : la chaîne Omarchy et les rc.d ont besoin de bash ≥ 4
 brew "bash-completion@2"
+brew "bash-preexec"        # requis par atuin ≥ 18 (plus embarqué) — sinon rien n'est enregistré
 brew "mosh"
 brew "btop"
 

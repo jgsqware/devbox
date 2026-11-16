@@ -28,6 +28,7 @@ gum
 dua-cli
 tldr
 atuin                 # historique shell — init dans overlay/bash/rc.d/30-atuin.sh
+bash-preexec          # requis par atuin ≥ 18 (plus embarqué) — sinon rien n'est enregistré
 
 # --- git / dev -----------------------------------------------------------
 git
