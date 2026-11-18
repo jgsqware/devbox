@@ -54,6 +54,7 @@ starship
 btop
 fastfetch
 glow
+herdr
 
 # --- conteneurs ----------------------------------------------------------
 docker
