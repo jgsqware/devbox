@@ -7,7 +7,7 @@
 #   ./sync-fleet.sh              toutes les machines tag:omarchy
 #   ./sync-fleet.sh mini iba     seulement celles-là (noms tailnet)
 #   DEVBOX_SYNC_EXCLUDE="a b*"   machines exclues, jokers * acceptés
-#                                (défaut : *-mcp jgsquare-nas homeassistant omarchy — pas/plus des devbox ; omarchy remplacé par dev)
+#                                (défaut : *-mcp jgsquare-nas homeassistant omarchy iphone-* notes *-rex — pas/plus des devbox ; omarchy remplacé par dev)
 #   DEVBOX_SYNC_SELF=0           ne pas rejouer le bootstrap sur cette machine
 #   mise run sync
 #
@@ -27,7 +27,7 @@ REMOTE_USER="${DEVBOX_USER:-jgsqware}"
 TIMEOUT="${DEVBOX_SYNC_TIMEOUT:-30m}"                  # par hôte
 # taguées tag:omarchy mais PAS des devbox à resynchroniser (noms courts,
 # espaces, * = n'importe quoi) : serveurs MCP sans SSH, NAS, domotique
-EXCLUDE="${DEVBOX_SYNC_EXCLUDE-*-mcp jgsquare-nas homeassistant omarchy}"
+EXCLUDE="${DEVBOX_SYNC_EXCLUDE-*-mcp jgsquare-nas homeassistant omarchy iphone-* notes *-rex}"
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/devbox/sync/$(date +%Y%m%d-%H%M%S)"
 
 # macOS : le CLI tailscale de l'app n'est pas dans le PATH, et la version
@@ -84,10 +84,11 @@ for h in "${hosts[@]}"; do
     # soi-même : même script, en local — pas de ssh vers sa propre machine
     timeout "$TIMEOUT" bash -lc "$remote" </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
   elif [[ "$(uname -s)" == Darwin ]]; then
-    # ssh classique : clé d'hôte acceptée au premier contact (accept-new),
-    # refusée ensuite si elle change ; BatchMode = jamais de prompt
+    # ssh classique, par le nom court (celui de ~/.ssh/config et known_hosts) :
+    # clé d'hôte acceptée au premier contact (accept-new), refusée si elle
+    # change ; BatchMode = jamais de prompt
     timeout "$TIMEOUT" ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
-      "$REMOTE_USER@$h" "bash -lc $(printf '%q' "$remote")" \
+      "$REMOTE_USER@${h%%.*}" "bash -lc $(printf '%q' "$remote")" \
       </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
   else
     timeout "$TIMEOUT" tailscale ssh "$REMOTE_USER@$h" "bash -lc $(printf '%q' "$remote")" \
