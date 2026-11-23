@@ -11,7 +11,7 @@
 #   DEVBOX_SYNC_SELF=0           ne pas rejouer le bootstrap sur cette machine
 #   mise run sync
 #
-# Sur chaque hôte, via `tailscale ssh` : cd ~/devbox && git pull --ff-only
+# Sur chaque hôte, via `tailscale ssh` (ssh classique depuis macOS) : cd ~/devbox && git pull --ff-only
 # && ./bootstrap.sh --skip cli-auth. Non interactif de bout en bout :
 #   · cli-auth sauté (gh/claude login attendraient un humain)
 #   · sudo DOIT être sans mot de passe (--sudo-nopasswd) — sinon l'hôte est
@@ -30,8 +30,12 @@ TIMEOUT="${DEVBOX_SYNC_TIMEOUT:-30m}"                  # par hôte
 EXCLUDE="${DEVBOX_SYNC_EXCLUDE-*-mcp jgsquare-nas homeassistant omarchy}"
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/devbox/sync/$(date +%Y%m%d-%H%M%S)"
 
-command -v tailscale >/dev/null && command -v jq >/dev/null \
+# macOS : le CLI tailscale de l'app n'est pas dans le PATH, et la version
+# App Store n'a pas `tailscale ssh` → ssh classique (voir plus bas).
+TS="$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)"
+[[ -x "$TS" ]] && command -v jq >/dev/null \
   || { echo "tailscale et jq requis" >&2; exit 1; }
+tailscale() { "$TS" "$@"; }
 
 SELF=""
 if (( $# )); then
@@ -79,6 +83,12 @@ for h in "${hosts[@]}"; do
   if [[ "$h" == "$SELF" ]]; then
     # soi-même : même script, en local — pas de ssh vers sa propre machine
     timeout "$TIMEOUT" bash -lc "$remote" </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
+  elif [[ "$(uname -s)" == Darwin ]]; then
+    # ssh classique : clé d'hôte acceptée au premier contact (accept-new),
+    # refusée ensuite si elle change ; BatchMode = jamais de prompt
+    timeout "$TIMEOUT" ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+      "$REMOTE_USER@$h" "bash -lc $(printf '%q' "$remote")" \
+      </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
   else
     timeout "$TIMEOUT" tailscale ssh "$REMOTE_USER@$h" "bash -lc $(printf '%q' "$remote")" \
       </dev/null >"$LOG_DIR/${h%%.*}.log" 2>&1 &
