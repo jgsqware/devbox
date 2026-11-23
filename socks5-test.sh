@@ -22,7 +22,9 @@ fail() { printf '  %s❌%s %s\n' "$RED" "$R" "$*"; exit 1; }
 # nom d'hôte → IPv4 tailnet via tailscale : le proxy n'écoute que sur celle-ci,
 # alors que le résolveur système peut rendre une IPv6 ou une IP locale
 # (nœud courant via /etc/hosts, etc.) — faux ❌ garanti.
-if [[ ! "$HOST" =~ ^[0-9.]+$ ]] && ts_ip="$(tailscale ip -4 "$HOST" 2>/dev/null | head -1)" && [[ -n "$ts_ip" ]]; then
+# macOS : CLI tailscale souvent hors PATH (app GUI) ; et /dev/tcp/<nom> y bloque → on résout en IP
+TS="$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)"
+if [[ ! "$HOST" =~ ^[0-9.]+$ ]] && ts_ip="$("$TS" ip -4 "$HOST" 2>/dev/null | head -1)" && [[ -n "$ts_ip" ]]; then
   HOST="$ts_ip"
 fi
 command -v curl >/dev/null || fail "curl absent"

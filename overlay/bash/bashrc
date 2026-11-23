@@ -15,6 +15,17 @@ case ":$PATH:" in
   *) export PATH="$OMARCHY_PATH/bin:$PATH" ;;
 esac
 
+# macOS : `ssh hôte cmd` (sonde mosh-server de `s`, Rex over SSH…) lance un
+# bash NON login, qui ne lit pas ~/.bash_profile → ni Homebrew (mosh-server)
+# ni ~/.local/bin (rex). On les ajoute ici, avant le return non interactif.
+if [[ "$OSTYPE" == darwin* ]]; then
+  for _p in /opt/homebrew/sbin /opt/homebrew/bin "$HOME/.local/bin"; do
+    case ":$PATH:" in *":$_p:"*) ;; *) [[ -d "$_p" ]] && PATH="$_p:$PATH" ;; esac
+  done
+  unset _p
+  export PATH
+fi
+
 # Non interactif : on s'arrête ici (OMARCHY_PATH et PATH sont posés).
 [[ $- != *i* ]] && return
 
