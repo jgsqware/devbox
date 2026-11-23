@@ -58,6 +58,13 @@ cap of `review` does not apply to this list.
   over existing data), check that **everything needed to rebuild is present**
   (backup files exist and are not empty), and stop before the first destructive
   step otherwise.
+- A guard that limits the blast radius (`--limit` required on `hosts: all`)
+  also refuses limits that cover everything: `all`, `'*'`, patterns or groups
+  that match the whole inventory (`ansible_play_hosts_all | length <
+  groups['all'] | length`) (!320).
+- Waits that must happen on each host use a per-host task (`wait_for`,
+  `until`/`retries`), not `pause`, which runs once per batch and evaluates its
+  `when` on the first host only (!320).
 - Destructive sequences are in a `block` with a `rescue` that tells the
   operator the exact state and the command to recover (for example the
   pre-operation backup folder).
@@ -95,6 +102,10 @@ cap of `review` does not apply to this list.
   where the output holds them). `--diff` must not print passwords.
 - Credentials are not on a command line (use the container's environment,
   `MYSQL_PWD`, files with 0600).
+- Boy scout rule: a file the branch touches that still puts a password on a
+  command line or in SQL without escaping (`psql -c "… PASSWORD '{{ pw }}'"`)
+  is fixed in the same MR (escape `'`, 0600 file + `no_log`, removed in
+  `always`). Reviewers flag it even when the line itself is unchanged (!320).
 
 ## 7. Health checks really check
 
@@ -129,6 +140,13 @@ cap of `review` does not apply to this list.
 - The description lists the scenarios that were run, **including the failure
   paths** (failed health check, missing input, interrupted step), and the
   dry-run cases from §1.
+- A new check job **can fail**: it does not swallow errors of its own
+  discovery step (a YAML file it cannot parse is a failure, not a skip), an
+  empty list of targets is a failure, and a self-test on broken fixtures proves
+  the job goes red (!320).
+- The description says how the job orders with the others (`needs: []` = in
+  parallel, does not block the deploy job), and the image, Python packages and
+  tool versions are pinned, with one source of truth per version (!320).
 
 ## 10. Traceability
 
