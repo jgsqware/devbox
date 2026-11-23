@@ -1,11 +1,13 @@
 ---
 name: prep-issue
-description: Prepare a Jira issue before and after coding it. (1) Pick - review the team's tickets on a topic through twg, cross-check them against the local repos (branches, open MRs, recent commits, code on the default branch) and recommend which one to take. (2) Brief - publish a "rack room" explainer artifact for the chosen ticket with tabs Why / Current / Target / How / Done when. (3) Review - after the implementation, update that same artifact with a Code review tab that explains the changes from most to least critical. Use on "/prep-issue", "quel ticket je pourrais prendre", "prépare le ticket PLT-123", "fais-moi une fiche du ticket", "ajoute la code review à la fiche", or when the user wants to understand a ticket before starting it.
+description: Prepare a Jira issue before and after coding it, or document a change that has no ticket and is already coded (from an MR or a branch). (1) Pick - review the team's tickets on a topic through twg, cross-check them against the local repos (branches, open MRs, recent commits, code on the default branch) and recommend which one to take. (2) Brief - publish a "rack room" explainer artifact for the chosen ticket with tabs Why / Current / Target / How / Done when. (3) Review - after the implementation, update that same artifact with a Code review tab that explains the changes from most to least critical. (4) Publish - put the page on GitLab Pages next to the MR and a Markdown summary in the MR description. Use on "/prep-issue", "quel ticket je pourrais prendre", "prépare le ticket PLT-123", "fais-moi une fiche du ticket", "ajoute la code review à la fiche", "fais la fiche de la MR 345", "pas de ticket, c'est déjà codé", "mets la fiche dans la MR", or when the user wants to understand a ticket before starting it or a change after writing it.
 ---
 
 # Prep issue
 
-Three phases. Do the one the user asks for; each one can run in a separate session. Reply to the user in French, following their CLAUDE.md answer style. All page copy is in French.
+Four phases. Do the one the user asks for; each one can run in a separate session. Reply to the user in French, following their CLAUDE.md answer style.
+
+**No ticket, already coded** (an MR or a branch): do phases 2 and 3 in one go from the diff. The hero names the MR (and the parent ticket if any), the tabs describe the change as it is (Current = before the branch, Target = after), and the Done-when criteria come from the MR description and the plans you read, ticked when verified.
 
 ## 0. Tools and ground rules
 
@@ -13,6 +15,7 @@ Three phases. Do the one the user asks for; each one can run in a separate sessi
 - **Code**: look for local clones first (`find ~ -maxdepth 4 -name .git -not -path '*/.cache/*'`). Run `git fetch --all --prune` (read-only), then read the **remote default branch** (`git show origin/<default>:<path>`, `git grep … origin/<default>`), not the local checkout, which may be behind or on another branch. For repos that aren't cloned, use `glab` / `gh` or `twg search-code`.
 - **Facts only**: every claim on the page comes from a ticket, a file or a command you ran. Label estimates as estimates. When a ticket's context disagrees with the code, say so on the page and in the reply.
 - **No writes outside the page**: don't assign tickets, comment in Jira, create branches or push unless the user asks.
+- **Bilingual page**: all page copy in English **and** French, `EN | FR` toggle in the tab bar, English by default. Duplicate each text element with `data-l="en"` / `data-l="fr"`, hide the other language with one rule (`:root[data-lang="en"] [data-l="fr"], :root[data-lang="fr"] [data-l="en"] { display: none !important; }`), and set `data-lang` from `?lang=` then `localStorage` (try/catch) in an inline script at the top. Code, paths and identifiers stay single. Check the build: as many `data-l="en"` as `data-l="fr"`.
 - **Memory**: at the end of phases 2 and 3, save or update a mind note (`capture`, `kind: doc`, `origin: <project>:<ticket-key-lowercase>-prep`) that holds the artifact URL. Phase 3 finds the page through that note. Give the `#ref` in the reply.
 
 ## 1. Pick: which ticket to take
@@ -57,8 +60,24 @@ Run it once the branch is implemented (the user says it's done, or asks for the 
    - **Mineur**: docs, generated docs, formatting, tests, CI config with no effect on deploys.
 4. **Add a tab `#review` "Code review"** after `#termine`. Order it as follows:
    - a header with branch, commits, files and lines changed, and an MR link if there is one;
-   - one card per change, most critical first. Each card has a severity pill (`bad` = critique, `todo` = important, `ok` = mineur), the `file:line` paths, what changed in plain words, why, the risk, and how it was or must be checked. Use a short diff excerpt as a `.cmd` block only when it helps;
+   - one card per change, most critical first. Each card has a severity pill (`bad` = critique, `todo` = important, `ok` = mineur), the `file:line` paths, then **the real diff hunk** (old/new line numbers, syntax colours, added/removed lines marked only by a green/red bar on the left), then 2–3 short bullets: effect, risk, check. Generate the hunks from `git diff origin/<default>...HEAD` with a script and highlight them at build time (no CDN); never copy them by hand;
    - a "Checks" section with what passed, what failed with its output, and what was not run. Never claim a check you didn't run;
    - a "Before merge" list: open questions and the actions left for the user.
    Also mark the matching steps and criteria in `#comment` / `#termine` as done or not done.
 5. **Publish** to the same file path, or with `url` from another session. Keep the title and icon. Update the mind note. Reply with the link, the top critical items in one line each, and what is still unchecked.
+
+## 4. Publish: GitLab Pages and the MR description
+
+For a repository whose CI has a merge-request Pages job (in `codabox/aws-foundation`: `pages:mr-brief`, see `docs/briefs/README.md`). A description cannot embed the page (GitLab strips iframes and scripts), so the MR gets both a link to the full page and a Markdown summary that shows without a click. Only push or edit the MR when the user asks.
+
+1. **Write the page into the branch** at `docs/briefs/<branch slug>/index.html`, where the slug is `$CI_COMMIT_REF_SLUG` (branch name in lower case, every character other than `a-z0-9` turned into `-`). The artifact file has no document skeleton (claude.ai adds it), so wrap it: `<!doctype html>`, `<html lang="en">`, `<head>` with `<meta charset="utf-8">` and the viewport meta (`width=device-width, initial-scale=1, viewport-fit=cover`), everything before the first `<header>` in the head, the rest in `<body>`.
+2. **Commit** it alone (`docs(briefs): MR !<iid> brief, published on GitLab Pages under mr-<iid>/`) and push. The job publishes it at `<pages url>/mr-<iid>/`, members only, and the MR shows it as the `briefs/mr-<iid>` environment ("View app"). Check the job log for the URL.
+3. **Markdown summary** at the top of the MR description (keep the rest): a `> **Brief:** <url> (EN/FR, members only)` line, then in English only:
+   - two or three sentences: what and why;
+   - a ` ```mermaid ` `flowchart LR` of the target (GitLab renders it), when a flow helps;
+   - a table of the review cards: severity, file, one-line effect;
+   - the critical hunks as ` ```diff ` blocks (GitLab colours `+`/`-`), at most two, cut to the lines that matter;
+   - the checks (passed, not run) and the merge order.
+   Update it with `glab mr update <iid> --description "$(cat <file>)"` after reading the current one.
+4. **Reply** with the Pages URL, the artifact URL, and what the description now shows.
+
