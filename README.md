@@ -108,7 +108,7 @@ brew (macos/Brewfile) ─▶ mise (macos/mise.toml) ─▶ moteur Omarchy vendor
 | AeroSpace | `macos/aerospace/aerospace.toml` | **lien** vers le dépôt |
 | Rex | `macos/rex/init.lua` | **lien** |
 | Raycast (script commands) | `macos/raycast/scripts/` | **lien** — ajouter le dossier une fois dans Raycast |
-| `brave-ms-app` | `macos/bin/` | **lien** dans `~/.local/bin` |
+| Zen (navigateur unique) : `zen-open`, `zen-setup` | `macos/bin/` + `macos/zen/` | **lien** dans `~/.local/bin` ; policies → préférences macOS `app.zen-browser.zen` (jamais dans le bundle : casse la signature, 1Password refuse Zen) |
 | `omarchy-ghostty-theme` | `macos/` | copie (son `self-update` se réécrit) |
 
 Les liens font qu'une modif faite sur le Mac atterrit directement dans le dépôt : il reste à la commiter.
@@ -121,6 +121,28 @@ l'export `.rayconfig`.
 ./macos/bootstrap.sh -n              # dry-run
 ./macos/bootstrap.sh --only apps     # seulement les configs d'apps (= mise run macos-scripts-install)
 ```
+
+## Navigateur : Zen, une instance, un container par identité
+
+Remplace Brave (une instance par proxy + profil M365 UA Linux), Teams v2 et la WebApp Safari.
+
+```
+                 container   SOCKS (microsocks tailnet, --with-socks5)   espace Zen
+zen-open gaming1 ─▶ gaming1 ──▶ gaming1:1080                    🟢 Gaming1   ─▶ AeroSpace G
+zen-open iba     ─▶ iba     ──▶ iba:1080                        🔵 Iba       ─▶ AeroSpace I
+zen-open wk      ─▶ wk      ──▶ wk:1080                         🟠 wk        ─▶ AeroSpace W
+   (+ wk-outlook, wk-web)        UA Linux Firefox sur les domaines M365 (UA Switcher, managed storage)
+```
+
+| Déclaratif (`macos/zen/`, `macos/bin/`) | Manuel, une fois par Mac |
+|---|---|
+| extensions forcées : Multi-Account Containers, UA Switcher, Open URL in Container | proxy de chaque container : MAC → *Manage containers* → *Advanced proxy* → `socks://<hôte>:1080` |
+| 3 containers (profil neuf uniquement) + 3 espaces Zen 🎮 Gaming1 / 🏢 Iba / 💼 wk liés à leur container, favoris par espace (`zen-spaces`, Zen fermé) | |
+| proxys : `microsocks` sur l'IP tailnet de chaque hôte (`bootstrap.sh --with-socks5`) | login Teams dans chaque container |
+| pas de synchro d'onglets entre fenêtres, pas de déchargement Teams, notifications | |
+
+Container Proxy (AMO) n'est **pas** utilisé : abandonné depuis 2021, MAC fait le proxy par container nativement (proxyDNS forcé).
+UA par container : impossible avec UA Switcher ≥ 0.7 → l'UA Linux s'applique aux domaines M365 dans les 3 containers.
 
 ## Thèmes Omarchy dans Ghostty sur macOS
 
@@ -185,21 +207,20 @@ l'étape `shell` rétablit la même chaîne depuis le dépôt vendoré :
          └─▶ 90-private.sh → ~/.config/devbox/private/rc.d/*.sh   ← couche privée
 ```
 
-Les configs copiées depuis le dépôt : `starship.toml` `tmux.conf`
+Les configs copiées depuis le dépôt : `starship.toml`
 `lazygit/config.yml` `btop.conf` `git/config`. Ajouter une cible = une ligne
 dans `DOTCONFIGS` (dans `bootstrap.sh`).
 
-**tmux** : `tmux.conf` reste celui d'Omarchy ; l'étape `tmux` y ajoute une
-seule ligne qui charge `overlay/tmux/devbox.conf` (→ `~/.config/tmux/devbox.conf`).
-Elle installe aussi [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar)
-sans TPM (clone dans `~/.tmux/plugins/` + binaire de release) ; ses hooks
-Claude Code viennent du plugin Claude `tmux-agent-sidebar@hiroppy` (étape
-`claude-plugins`). **`prefix+a` : liste en popup** (Entrée saute et ferme, Esc/q ferme) ;
-`prefix+e` / `prefix+E` : volet permanent dans la fenêtre / partout (plus créé d'office).
-Patchs locaux dans `overlay/tmux/patches/tmux-agent-sidebar/` (libellé stable =
-titre de la conversation Claude, mode popup) : appliqués puis compilés avec `cargo` ; sans
-`cargo`, binaire de release. À supprimer dès qu'ils sont intégrés en amont.
-Fonctions shell `ta` / `trs` : `rc.d/50-tmux.sh`.
+**Presse-papier** (poste headless : ni xclip, ni xsel, ni wl-clipboard) :
+`clip [fichier…]` (`rc.d/50-clip.sh`) copie via `pbcopy` (OrbStack → Mac) sinon
+OSC 52 vers le terminal hôte (passe le SSH). lazygit fait pareil via la
+surcouche `overlay/lazygit/devbox.yml` (→ `~/.config/devbox/lazygit.yml`,
+empilée par `LG_CONFIG_FILE`) — fini « No clipboard utilities available ».
+
+**tmux** : abandonné. L'étape `shell` retire les restes des anciennes versions
+(`rc.d/50-tmux.sh`, `~/.tmux/plugins/tmux-agent-sidebar`, `devbox.conf`) et
+`claude-plugins` désinstalle le plugin Claude `tmux-agent-sidebar@hiroppy`.
+Le paquet `tmux` n'est pas désinstallé d'office : `sudo pacman -Rns tmux`.
 
 ## Override bash
 

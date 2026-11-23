@@ -11,4 +11,5 @@ tap "nikitabobko/tap"
 cask "nikitabobko/tap/aerospace"
 cask "raycast"
 cask "ghostty"
+cask "zen"                 # navigateur unique : Teams x3 + SOCKS par container (macos/zen/)
 cask "font-caskaydia-mono-nerd-font"

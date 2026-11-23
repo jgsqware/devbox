@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""zen-spaces — un espace Zen par identité, lié à son container (Zen FERMÉ, idempotent).
+
+  🟢 Gaming1 → container gaming1   🔵 Iba → container iba   🟠 wk → container wk
+
+Chaque espace a son nom, son emoji et son dégradé : on sait au premier coup d'œil
+quelle fenêtre est qui. L'espace par défaut « Space » devient Gaming1 (ses onglets
+restent). Les dossiers de favoris Gaming1/Iba/wk sont rattachés à leur espace
+(zen_bookmarks_workspaces) → chaque espace ne montre que ses favoris.
+
+Écrit zen-sessions.jsonlz4 (mozlz4) sans module lz4 : décodeur maison, encodage
+en bloc LZ4 « tout littéral » (valide, juste non compressé).
+"""
+import json, os, sqlite3, struct, subprocess, sys, time, uuid
+
+PROFILE = os.path.expanduser("~/Library/Application Support/zen/Profiles/devbox")
+SESS = os.path.join(PROFILE, "zen-sessions.jsonlz4")
+
+SPACES = [  # nom, emoji, container, couleur du dégradé
+    ("Gaming1", "🎮", "gaming1", (46, 160, 67)),
+    ("Iba",     "🏢", "iba",     (31, 111, 235)),
+    ("wk",      "💼", "wk",      (230, 126, 34)),
+]
+
+
+def lz4_block_decode(src, size):
+    out, i = bytearray(), 0
+    while i < len(src):
+        tok = src[i]; i += 1
+        lit = tok >> 4
+        if lit == 15:
+            while True:
+                b = src[i]; i += 1; lit += b
+                if b != 255: break
+        out += src[i:i + lit]; i += lit
+        if i >= len(src): break
+        off = src[i] | src[i + 1] << 8; i += 2
+        ml = tok & 15
+        if ml == 15:
+            while True:
+                b = src[i]; i += 1; ml += b
+                if b != 255: break
+        ml += 4
+        for _ in range(ml): out.append(out[-off])
+    return bytes(out[:size])
+
+
+def lz4_block_encode_literals(data):
+    n, out = len(data), bytearray()
+    if n < 15:
+        out.append(n << 4)
+    else:
+        out.append(0xF0); r = n - 15
+        while r >= 255: out.append(255); r -= 255
+        out.append(r)
+    return bytes(out + data)
+
+
+def read_sess():
+    raw = open(SESS, "rb").read()
+    assert raw[:8] == b"mozLz40\0", "format zen-sessions inattendu"
+    size = struct.unpack("<I", raw[8:12])[0]
+    return json.loads(lz4_block_decode(raw[12:], size))
+
+
+def write_sess(j):
+    data = json.dumps(j, separators=(",", ":")).encode()
+    tmp = SESS + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(b"mozLz40\0" + struct.pack("<I", len(data)) + lz4_block_encode_literals(data))
+    os.replace(tmp, SESS)
+
+
+def main():
+    if subprocess.run(["pgrep", "-xq", "zen"]).returncode == 0:
+        sys.exit("zen-spaces: quitter Zen d'abord")
+    ids = {i.get("name"): i["userContextId"]
+           for i in json.load(open(os.path.join(PROFILE, "containers.json")))["identities"]}
+    j = read_sess()
+    spaces = j.setdefault("spaces", [])
+    by_name = {s.get("name"): s for s in spaces}
+    if "Gaming1" not in by_name and "Space" in by_name:   # recycle l'espace par défaut
+        by_name["Space"]["name"] = "Gaming1"; by_name["Gaming1"] = by_name.pop("Space")
+    changed = False
+    for name, icon, cont, rgb in SPACES:
+        s = by_name.get(name)
+        if s is None:
+            s = {"uuid": "{%s}" % uuid.uuid4(), "name": name, "hasCollapsedPinnedTabs": False}
+            spaces.append(s); by_name[name] = s
+        want = {"icon": icon, "containerTabId": ids[cont],
+                "theme": {"type": "gradient", "opacity": 0.5, "texture": 0, "textureType": "grain",
+                          "gradientColors": [{"c": list(rgb), "isCustom": False, "algorithm": "floating",
+                                              "isPrimary": True, "type": "explicit-lightness",
+                                              "lightness": "50"}]}}
+        for k, v in want.items():
+            if s.get(k) != v: s[k] = v; changed = True
+    if changed:
+        write_sess(j); print("zen-spaces: espaces Gaming1 / Iba / wk écrits")
+
+    # favoris : dossier de la barre « Gaming1/Iba/wk » (+ son contenu) → espace du même nom
+    db = sqlite3.connect(os.path.join(PROFILE, "places.sqlite"))
+    now = int(time.time() * 1000)
+    n = 0
+    for name, *_ in SPACES:
+        row = db.execute("select id, guid from moz_bookmarks where type=2 and title=? and parent="
+                         "(select id from moz_bookmarks where guid='toolbar_____')", (name,)).fetchone()
+        if not row: continue
+        guids = [row[1]] + [g for (g,) in db.execute(
+            "with recursive t(id) as (select ?1 union select b.id from moz_bookmarks b join t on b.parent=t.id) "
+            "select guid from moz_bookmarks where id in (select id from t) and id != ?1", (row[0],))]
+        for g in guids:
+            n += db.execute("insert or ignore into zen_bookmarks_workspaces"
+                            "(bookmark_guid, workspace_uuid, created_at, updated_at) values (?,?,?,?)",
+                            (g, by_name[name]["uuid"], now, now)).rowcount
+    # rattachements orphelins (espace qui n'existe plus)
+    live = [s["uuid"] for s in spaces]
+    gone = db.execute("delete from zen_bookmarks_workspaces where workspace_uuid not in (%s)"
+                      % ",".join("?" * len(live)), live).rowcount
+    if gone: print(f"zen-spaces: {gone} rattachements orphelins supprimés")
+    db.commit(); db.close()
+    if n: print(f"zen-spaces: {n} favoris rattachés à leur espace")
+
+
+if __name__ == "__main__":
+    main()

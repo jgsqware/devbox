@@ -186,8 +186,40 @@ do_apps() {
   install_link "$MAC_DIR/aerospace/aerospace.toml" "$HOME/.config/aerospace/aerospace.toml"
   install_link "$MAC_DIR/rex/init.lua"             "$HOME/.config/rex/init.lua"
   install_link "$MAC_DIR/raycast/scripts"          "$HOME/.config/raycast/scripts"
-  install_link "$MAC_DIR/bin/brave-ms-app"         "$HOME/.local/bin/brave-ms-app"
-  ok "liens vers le dépôt : aerospace.toml · rex/init.lua · raycast/scripts · brave-ms-app"
+  install_link "$MAC_DIR/bin/zen-open"             "$HOME/.local/bin/zen-open"
+  install_link "$MAC_DIR/bin/zen-setup"            "$HOME/.local/bin/zen-setup"
+  install_link "$MAC_DIR/bin/aero-center"          "$HOME/.local/bin/aero-center"
+  # Bezels arcade de aero-center (fenêtre seule centrée) — app Swift compilée localement
+  if has swiftc && ! (( DRY_RUN )); then "$MAC_DIR/aero-bezel/build.sh" >/dev/null && ok "AeroBezel.app compilée (~/Applications)"; fi
+  # Rex : thème clair + matériau Glass (fenêtre et panes translucides, le fond d'écran transparaît)
+  run defaults write com.superlogical.rex Workspace.appearance -string light
+  run defaults write com.superlogical.rex Workspace.interfaceStyle -string glass
+  run defaults write com.superlogical.rex Workspace.usesPaneGlass -bool true
+  run defaults write com.superlogical.rex Workspace.tintsPanesWithProgramBackground -bool false   # nvim & co ne ré-opacifient pas le pane
+  # Fond d'écran = décor panoramique des bezels (~/.config/aero-bezel/wide.*, hors dépôt : image sous licence)
+  # → raccord invisible entre bezels et bureau. « Remplir l'écran » = même cadrage que AeroBezel.
+  local wide; wide=$(ls "$HOME"/.config/aero-bezel/wide.* 2>/dev/null | head -1 || true)
+  if [[ -n $wide ]] && ! (( DRY_RUN )); then
+    /usr/bin/osascript -l JavaScript -e "ObjC.import('AppKit');
+      const url = \$.NSURL.fileURLWithPath('$wide'), o = \$.NSMutableDictionary.dictionary;
+      o.setObjectForKey(\$.NSNumber.numberWithInt(3), \$.NSWorkspaceDesktopImageScalingKey);
+      o.setObjectForKey(\$.NSNumber.numberWithBool(true), \$.NSWorkspaceDesktopImageAllowClippingKey);
+      const s = \$.NSScreen.screens;
+      for (let i = 0; i < s.count; i++) \$.NSWorkspace.sharedWorkspace.setDesktopImageURLForScreenOptionsError(url, s.objectAtIndex(i), o, null);" \
+      >/dev/null && ok "fond d'écran : $wide"
+  fi
+  [[ -L "$HOME/.local/bin/brave-ms-app" ]] && run rm -f "$HOME/.local/bin/brave-ms-app"   # ancien setup Brave
+  ok "liens vers le dépôt : aerospace.toml · rex/init.lua · raycast/scripts · zen-open · zen-setup · aero-center"
+  # Zen : policies (extensions, UA, containers) + profil devbox — cf. macos/zen/
+  # Proxys des containers = microsocks tailnet des hôtes (bootstrap.sh --with-socks5), rien côté Mac
+  if [[ -d /Applications/Zen.app ]] && ! (( DRY_RUN )); then
+    "$MAC_DIR/bin/zen-setup" && ok "Zen conforme (zen-setup)" || warn "zen-setup : à relancer Zen fermé"
+  fi
+  # rex au même chemin que sur les devbox Linux (/usr/local/bin) : init.lua
+  # l'appelle en dur, et les clients SSH (Moshi) le cherchent là.
+  if [[ -x "$HOME/.local/bin/rex" && "$(readlink /usr/local/bin/rex 2>/dev/null)" != "$HOME/.local/bin/rex" ]]; then
+    run sudo ln -sfn "$HOME/.local/bin/rex" /usr/local/bin/rex && ok "rex → /usr/local/bin/rex"
+  fi
   # copie, pas lien : self-update réécrit son propre fichier (realpath)
   install_file "$MAC_DIR/omarchy-ghostty-theme" "$HOME/.local/bin/omarchy-ghostty-theme"
   run chmod +x "$HOME/.local/bin/omarchy-ghostty-theme"

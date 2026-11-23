@@ -117,6 +117,9 @@ ctrl-alt-j = 'focus down'
 ctrl-alt-k = 'focus up'
 ctrl-alt-l = 'focus right'
 ctrl-alt-f = 'fullscreen'
+# Colonne centrale 1/4 | 2/4 | 1/4 en tiling, auto-placée au milieu ; seule → bezels arcade (AeroBezel) ;
+# re-presser = ferme les bezels + parts égales — cf. macos/bin/aero-center
+ctrl-alt-shift-f = 'exec-and-forget ~/.local/bin/aero-center'
 
 # See: https://nikitabobko.github.io/AeroSpace/commands#move
 ctrl-alt-shift-h = 'move left'
@@ -177,52 +180,11 @@ ctrl-alt-shift-l = ['join-with right', 'mode main']
 
 
 # ── Fenêtre → workspace (première règle qui matche gagne) ──
+# Zen (app.zen-browser.zen) : pas de règle, le titre ne trahit pas le container →
+# aero-spawn range chaque fenêtre par son id (cf. spawn_zen).
 [[on-window-detected]]
 if.app-id = 'com.tinyspeck.slackmacgap'
 run = ['layout tiling', 'move-node-to-workspace W']
-
-[[on-window-detected]]
-if.app-id = 'com.brave.Browser'
-if.window-title-regex-substring = '– Iba$'
-run = ['move-node-to-workspace I']
-
-[[on-window-detected]]
-if.app-id = 'com.brave.Browser'
-if.window-title-regex-substring = '– Gaming1$'
-run = ['move-node-to-workspace G']
-
-[[on-window-detected]]
-if.app-id = 'com.brave.Browser'
-if.window-title-regex-substring = '– wk$'
-run = ['move-node-to-workspace W']
-
-[[on-window-detected]]
-if.app-id = 'com.mitchellh.ghostty'
-if.window-title-regex-substring = '^iba$'
-run = ['move-node-to-workspace I']
-
-[[on-window-detected]]
-if.app-id = 'com.mitchellh.ghostty'
-if.window-title-regex-substring = '^gaming1$'
-run = ['move-node-to-workspace G']
-
-[[on-window-detected]]
-if.app-id = 'com.mitchellh.ghostty'
-if.window-title-regex-substring = '^wk$'
-run = ['move-node-to-workspace W']
-
-[[on-window-detected]]
-if.app-id = 'com.mitchellh.ghostty'
-if.window-title-regex-substring = '^omarchy$'
-run = ['move-node-to-workspace A']
-
-[[on-window-detected]]
-if.app-id = 'com.microsoft.teams2'
-run = ['move-node-to-workspace G']
-
-[[on-window-detected]]
-if.app-id = 'com.apple.Safari.WebApp.9C2750D5-E82B-4888-8C62-777BCA91E557'
-run = ['move-node-to-workspace I']
 
 [[on-window-detected]]
 if.app-id = 'com.anthropic.claudefordesktop'

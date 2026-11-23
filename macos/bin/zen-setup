@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# zen-setup — rend Zen conforme au dépôt, idempotent (appelé par bootstrap ET par zen-open).
+#   1. policies (extensions forcées, UA Linux M365, containers, notifs) → préférences macOS
+#      du domaine app.zen-browser.zen ; le bundle reste intact (signature valide).
+#   2. profil dédié « devbox » créé une fois et défini comme profil par défaut de l'install
+#      (l'ancien profil reste intact). Les containers ne sont semés que sur un profil neuf.
+#   3. user.js copié dans le profil.
+set -euo pipefail
+
+APP="/Applications/Zen.app"
+BIN="$APP/Contents/MacOS/zen"
+SRC="$(cd "$(dirname "$(readlink -f "$0")")/../zen" && pwd)"
+ZDIR="$HOME/Library/Application Support/zen"
+PROFILE_REL="Profiles/devbox"
+PROFILE="$ZDIR/$PROFILE_REL"
+
+[[ -x "$BIN" ]] || { echo "zen-setup: $APP absent (brew install --cask zen)" >&2; exit 1; }
+
+# ── 1. policies ───────────────────────────────────────────────────────────────
+# Dans les préférences macOS de l'app (domaine app.zen-browser.zen), PAS dans le bundle :
+# un distribution/policies.json casse le sceau de signature → 1Password refuse le navigateur.
+gecko="$(awk -F= '/^Milestone=/{split($2,v,"."); print v[1]".0"}' "$APP/Contents/Resources/platform.ini")"
+DOMAIN="app.zen-browser.zen"
+/usr/bin/python3 -I - "$SRC/policies.json" "$gecko" "$DOMAIN" <<'PY'
+import json, plistlib, subprocess, sys
+src, gecko, domain = sys.argv[1:4]
+pol = json.loads(open(src).read().replace("@GECKO@", gecko))["policies"]
+pol["EnterprisePoliciesEnabled"] = True
+cur = subprocess.run(["defaults", "export", domain, "-"], capture_output=True).stdout
+cur = plistlib.loads(cur) if cur else {}
+if any(cur.get(k) != v for k, v in pol.items()):
+    cur.update(pol)
+    subprocess.run(["defaults", "import", domain, "-"], input=plistlib.dumps(cur), check=True)
+    print(f"zen-setup: policies écrites dans les préférences {domain} (Gecko {gecko})")
+PY
+# ancien emplacement (bundle) : le retirer rétablit la signature
+dist="$APP/Contents/Resources/distribution"
+if [[ -e "$dist/policies.json" ]]; then
+  rm -f "$dist/policies.json" && rmdir "$dist" 2>/dev/null
+  echo "zen-setup: policies.json retiré du bundle (signature rétablie)"
+fi
+
+# ── 2. profil devbox ──────────────────────────────────────────────────────────
+if [[ ! -d "$PROFILE" ]]; then
+  pgrep -xq zen && { echo "zen-setup: quitter Zen avant la création du profil" >&2; exit 1; }
+  mkdir -p "$ZDIR/Profiles"
+  "$BIN" -headless -CreateProfile "devbox $PROFILE" >/dev/null 2>&1
+  echo "zen-setup: profil devbox créé"
+fi
+# profil par défaut de cette install (profiles.ini [Install…] + installs.ini)
+if ! grep -q "^Default=$PROFILE_REL\$" "$ZDIR/installs.ini" 2>/dev/null; then
+  if pgrep -xq zen; then
+    echo "zen-setup: ⚠️  Zen tourne sur un autre profil — le quitter puis relancer zen-setup" >&2
+  else
+  /usr/bin/python3 -I - "$ZDIR" "$PROFILE_REL" <<'PY'
+import configparser, sys, os, glob
+zdir, rel = sys.argv[1], sys.argv[2]
+def load(p):
+    c = configparser.RawConfigParser(); c.optionxform = str
+    c.read(p); return c
+pi = load(os.path.join(zdir, "profiles.ini"))
+# hash de l'install = fonction du chemin /Applications/Zen.app → identique sur tous les Macs
+installs = [s for s in pi.sections() if s.startswith("Install")] or ["Install6ED35B3CA1B5D3AF"]
+for s in installs:
+    if not pi.has_section(s): pi.add_section(s)
+for s in pi.sections():
+    if s.startswith("Profile") and pi.get(s, "Path", fallback="") == rel:
+        break
+else:
+    n = max([int(s[7:]) for s in pi.sections() if s.startswith("Profile") and s[7:].isdigit()] + [-1]) + 1
+    pi[f"Profile{n}"] = {"Name": "devbox", "IsRelative": "1", "Path": rel}
+for s in pi.sections():   # 1er lancement sans [Install…] : Firefox prend le Default=1
+    if s.startswith("Profile"):
+        if pi.get(s, "Path", fallback="") == rel: pi[s]["Default"] = "1"
+        else: pi.remove_option(s, "Default")
+for s in installs:
+    pi[s]["Default"] = rel; pi[s]["Locked"] = "1"
+with open(os.path.join(zdir, "profiles.ini"), "w") as f: pi.write(f, space_around_delimiters=False)
+ii = load(os.path.join(zdir, "installs.ini"))
+for s in installs:
+    h = s[len("Install"):]
+    if not ii.has_section(h): ii.add_section(h)
+    ii[h]["Default"] = rel; ii[h]["Locked"] = "1"
+with open(os.path.join(zdir, "installs.ini"), "w") as f: ii.write(f, space_around_delimiters=False)
+PY
+  echo "zen-setup: devbox = profil par défaut"
+  fi
+fi
+
+# ── 3. user.js ────────────────────────────────────────────────────────────────
+cmp -s "$SRC/user.js" "$PROFILE/user.js" || { cp "$SRC/user.js" "$PROFILE/user.js"; echo "zen-setup: user.js copié"; }
+
+# ── 4. espaces Gaming1 / Iba / wk liés à leur container (Zen fermé seulement) ─
+if ! pgrep -xq zen && [[ -f "$PROFILE/zen-sessions.jsonlz4" ]]; then
+  "$(dirname "$(readlink -f "$0")")/zen-spaces" || echo "zen-setup: ⚠️  zen-spaces a échoué" >&2
+fi

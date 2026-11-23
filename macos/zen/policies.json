@@ -1,0 +1,53 @@
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DontCheckDefaultBrowser": true,
+    "ExtensionSettings": {
+      "@testpilot-containers": {
+        "installation_mode": "force_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/multi-account-containers/latest.xpi"
+      },
+      "{a6c4a591-f1b2-4f03-b3ff-767e5bedf4e7}": {
+        "installation_mode": "force_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/user-agent-string-switcher/latest.xpi"
+      },
+      "{f069aec0-43c5-4bbf-b6b4-df95c4326b98}": {
+        "installation_mode": "force_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/open-url-in-container/latest.xpi"
+      },
+      "{d634138d-c276-4fc8-924b-40a0ea21d284}": {
+        "installation_mode": "force_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/1password-x-password-manager/latest.xpi",
+        "default_area": "navbar"
+      },
+      "*": { "installation_mode": "allowed" }
+    },
+    "3rdparty": {
+      "Extensions": {
+        "{a6c4a591-f1b2-4f03-b3ff-767e5bedf4e7}": {
+          "json": "{\"json-guid\":\"devbox-@GECKO@-2\",\"mode\":\"custom\",\"custom\":{\"teams.microsoft.com, teams.cloud.microsoft, teams.live.com, outlook.cloud.microsoft, outlook.office.com, outlook.office365.com, m365.cloud.microsoft, login.microsoftonline.com, login.microsoft.com\":\"Mozilla/5.0 (X11; Linux x86_64; rv:@GECKO@) Gecko/20100101 Firefox/@GECKO@\"}}"
+        }
+      }
+    },
+    "Containers": {
+      "Default": [
+        { "name": "gaming1",     "icon": "briefcase",   "color": "green" },
+        { "name": "iba",         "icon": "briefcase",   "color": "blue" },
+        { "name": "wk",          "icon": "briefcase",   "color": "orange" }
+      ]
+    },
+    "Permissions": {
+      "Notifications": {
+        "Allow": [
+          "https://teams.microsoft.com",
+          "https://teams.cloud.microsoft",
+          "https://outlook.cloud.microsoft",
+          "https://outlook.office.com"
+        ]
+      },
+      "Autoplay": {
+        "Allow": ["https://teams.microsoft.com", "https://teams.cloud.microsoft"]
+      }
+    }
+  }
+}

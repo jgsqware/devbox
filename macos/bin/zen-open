@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# zen-open — ouvre une nouvelle fenêtre Zen dans le container d'une identité.
+# Une seule instance Zen ; l'isolation (cookies, proxy SOCKS) se fait par container.
+# usage: zen-open <identité> [url]
+#   gaming1 | iba | wk   Teams du compte, dans le container du même nom
+#   wk-outlook           Outlook dans le container wk
+#   wk-web               navigation dans le container wk
+# Chaque container sort par le microsocks tailnet de son hôte (proxy réglé dans MAC) :
+#   socks://<hôte>:1080 — posé par `bootstrap.sh --with-socks5` sur iba, gaming1, wk
+set -euo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+TEAMS="https://teams.cloud.microsoft/"
+OUTLOOK="https://outlook.cloud.microsoft/mail/"
+
+# `case`, pas de tableau associatif : Raycast peut prendre le bash 3.2 du système
+case "${1:-}" in
+  gaming1)    c=gaming1 url="$TEAMS" ;;
+  iba)        c=iba     url="$TEAMS" ;;
+  wk)         c=wk      url="$TEAMS" ;;
+  wk-outlook) c=wk      url="$OUTLOOK" ;;
+  wk-web)     c=wk      url="about:newtab" ;;
+  *) echo "usage: zen-open <gaming1|iba|wk|wk-outlook|wk-web> [url]" >&2; exit 1 ;;
+esac
+url="${2:-$url}"
+
+# Proxy injoignable = container sans réseau (MAC échoue fermé) → on prévient
+nc -z -G 2 "$c" 1080 2>/dev/null \
+  || echo "zen-open: ⚠️  SOCKS $c:1080 injoignable (tailnet ? bootstrap --with-socks5 ?)" >&2
+
+"$(dirname "$(readlink -f "$0")")/zen-setup" >/dev/null || true
+
+# ext+container: = handler de l'extension « Open URL in Container » (MAC n'en a pas)
+enc="$(/usr/bin/python3 -I -c 'import sys,urllib.parse as u;print(u.quote(sys.argv[1],safe=""))' "$url")"
+target="ext+container:name=${c}&url=${enc}"
+
+# Zen éteint : le démarrer d'abord — une URL ext+container: passée au lancement arrive
+# avant que l'extension n'enregistre son handler (→ recherche web).
+if ! pgrep -xq zen; then
+  open -a /Applications/Zen.app
+  for _ in $(seq 1 40); do pgrep -xq zen && break; sleep 0.25; done
+  sleep 4
+fi
+/Applications/Zen.app/Contents/MacOS/zen --new-window "$target" >/dev/null 2>&1 &
+disown

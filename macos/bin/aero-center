@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# aero-center — fenêtre focus en colonne centrale 1/4 | 2/4 | 1/4, en restant en TILING.
+#   1. Fenêtre seule sur le workspace → ouvre AeroBezel (2 panneaux arcade, cf. macos/aero-bezel)
+#      pour avoir des voisines de part et d'autre.
+#   2. Auto-placement : `move left/right` jusqu'à autant de voisines à gauche qu'à droite.
+#   3. balance-sizes puis resize width = ratio × largeur écran : AeroSpace retire le delta aux
+#      voisines à parts égales → 3 fenêtres = exactement 1/4 | 2/4 | 1/4.
+#   Re-presser = ferme les bezels éventuels + retour à parts égales.
+# Lancé par AeroSpace (ctrl-alt-shift-f). Largeur réglable : AERO_CENTER_RATIO=0.6 (défaut 0.5).
+set -euo pipefail
+
+AS=$(command -v aerospace || echo /opt/homebrew/bin/aerospace)
+RATIO=${AERO_CENTER_RATIO:-0.5}
+BEZEL_ID=io.jgsquare.aero-bezel
+BEZEL_APP="$HOME/Applications/AeroBezel.app"
+STATE_DIR="${TMPDIR:-/tmp}"
+
+wid=$("$AS" list-windows --focused --format '%{window-id}')
+ws=$("$AS" list-workspaces --focused)
+state="$STATE_DIR/aero-center.$wid"
+
+ws_windows() { "$AS" list-windows --workspace "$ws" --format '%{window-id}|%{app-bundle-id}|%{window-layout}'; }
+bezels()     { ws_windows | awk -F'|' -v b="$BEZEL_ID" '$2 == b { print $1 }'; }
+bezel_pids() {   # une instance AeroBezel par workspace (open -n) ; boutons masqués → pas de `close`, on tue le PID
+  "$AS" list-windows --workspace "$ws" --format '%{app-pid}|%{app-bundle-id}' | awk -F'|' -v b="$BEZEL_ID" '$2 == b { print $1 }' | sort -u
+}
+
+# ── 2e appui : on défait tout ────────────────────────────────────────────────
+if [[ -e $state || -n $(bezels) ]]; then
+  for p in $(bezel_pids); do kill "$p" 2>/dev/null || true; done
+  for _ in $(seq 20); do [[ -z $(bezels) ]] && break; sleep 0.05; done
+  rm -f "$state"
+  "$AS" focus --window-id "$wid" 2>/dev/null || true
+  "$AS" balance-sizes
+  exit 0
+fi
+
+[[ $("$AS" list-windows --focused --format '%{window-layout}') == floating ]] && "$AS" layout tiling
+
+# ── 1. Fenêtre seule → bezels arcade ─────────────────────────────────────────
+tiled=$(ws_windows | awk -F'|' '$3 != "floating"' | wc -l | tr -d ' ')
+if (( tiled == 1 )) && [[ -d $BEZEL_APP ]]; then
+  open -g -n "$BEZEL_APP"
+  for _ in $(seq 30); do (( $(bezels | wc -l) >= 2 )) && break; sleep 0.1; done
+  "$AS" focus --window-id "$wid"
+fi
+
+"$AS" layout h_tiles 2>/dev/null || true   # accordion/vertical → colonnes
+
+# ── 2. Auto-placement au milieu ──────────────────────────────────────────────
+neighbours() {   # nb de fenêtres tilées dans la direction $1
+  local c=0
+  while (( c < 20 )) && "$AS" focus "$1" --ignore-floating --boundaries workspace --boundaries-action fail >/dev/null 2>&1; do
+    c=$((c + 1))
+  done
+  "$AS" focus --window-id "$wid"
+  echo "$c"
+}
+left=$(neighbours left)
+right=$(neighbours right)
+while (( left - right > 1 )); do "$AS" move left;  left=$((left - 1));  right=$((right + 1)); done
+while (( right - left > 1 )); do "$AS" move right; left=$((left + 1));  right=$((right - 1)); done
+
+# ── 3. Taille : 1/4 | 2/4 | 1/4 ──────────────────────────────────────────────
+"$AS" balance-sizes
+screen=$("$AS" list-monitors --focused --format '%{monitor-appkit-nsscreen-screens-id}')
+width=$(/usr/bin/osascript -l JavaScript -e "ObjC.import('AppKit');
+  \$.NSScreen.screens.objectAtIndex($screen - 1).visibleFrame.size.width")
+"$AS" resize width "$(awk -v w="$width" -v r="$RATIO" 'BEGIN { printf "%d", w * r }')"
+
+rm -f "$STATE_DIR"/aero-center.* && touch "$state"
