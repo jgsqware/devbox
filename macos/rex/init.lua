@@ -106,10 +106,14 @@ rex.bind("cmd+shift+b", "bitwarden_search")
 
 -- ---------------------------------------------------------------------------
 -- ov : cmd+shift+o → onglet de la console ov (locale ou sur un host).
--- Source de vérité : dépôt jgsqware/ov (contrib/rex/goto_ov.lua), cloné dans
--- ~/overview. Chargé seulement si présent : sans ov, pas de binding.
+-- Source de vérité : dépôt jgsqware/ov (contrib/rex/goto_ov.lua). Cherché dans
+-- le checkout de dev ($OV_DIR, sinon ~/code/ov, celui de `mise run ov`), puis
+-- dans ~/overview (copie sans le code). Absent partout : pas de binding.
 do
-  local f = os.getenv("HOME") .. "/overview/contrib/rex/goto_ov.lua"
-  local h = io.open(f, "r")
-  if h then h:close(); dofile(f) end
+  local home = os.getenv("HOME")
+  for _, dir in ipairs({ os.getenv("OV_DIR"), home .. "/code/ov", home .. "/overview" }) do
+    local f = dir and (dir .. "/contrib/rex/goto_ov.lua")
+    local h = f and io.open(f, "r")
+    if h then h:close(); dofile(f); break end
+  end
 end
