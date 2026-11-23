@@ -57,17 +57,17 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi cleanup hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins moshi cleanup hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
 IS_OMARCHY=0                                           # posé par detect_omarchy
 OMARCHY_WHY=""
 # étapes qui ÉCRASENT ce qu'un vrai Omarchy gère lui-même (locale, /etc/skel,
-# moteur ~/.local/share/omarchy, bashrc/starship/tmux/btop/git, thème actif)
+# moteur ~/.local/share/omarchy, bashrc/starship/lazygit/btop/git, thème actif)
 OMARCHY_PROTECTED=(locale skel vendor shell theme)
 # rc.d déposés MÊME sur un vrai Omarchy (do_shell_light) : ne touchent à rien d'Omarchy
-OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-git.sh 50-tmux.sh 50-worktrunk.sh 90-private.sh)
+OMARCHY_SAFE_RC=(30-atuin.sh 30-remote.sh 50-aliases.sh 50-clip.sh 50-git.sh 50-worktrunk.sh 90-private.sh)
 WITH_TAILSCALE=1                                      # actif par défaut — --no-tailscale pour désactiver
 WITH_SOCKS5=0                                         # opt-in — --with-socks5 pour exposer un proxy SOCKS5 sur la tailnet
 SOCKS5_PORT="${DEVBOX_SOCKS5_PORT:-1080}"
@@ -233,7 +233,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell tmux theme tailscale cli-auth claude-plugins moshi cleanup hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins moshi cleanup hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -245,7 +245,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   skel      cp -af /etc/skel/. ~/   (sauvegarde préalable)
   vendor    sparse-checkout du moteur omarchy (~5 Mo) + export OMARCHY_PATH
   shell     ~/.bashrc + rc.d (+ couche privée) + prompt starship & configs du dépôt omarchy + identité git
-  tmux      plugin tmux-agent-sidebar (clone + binaire) + overlay ~/.config/tmux/devbox.conf
+            + presse-papier lazygit (pbcopy / OSC 52) + retrait des restes tmux
   theme     omarchy-theme-set en headless + câblage nvim/zellij
   tailscale tailscaled + tailscale up + accès SSH via la tailnet   (par défaut, --no-tailscale pour désactiver)
             (+ proxy SOCKS5 sur l'IP tailnet avec --with-socks5)
@@ -254,7 +254,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
             (+ relais LiveSync sur 127.0.0.1 avec --with-livesync-relay)
             (+ serveur Rex sur l'IP tailnet, port 7297 — --no-rex pour désactiver)
   cli-auth  gh auth login + claude auth login --claudeai — interactif, sauté si déjà authentifié
-  claude-plugins  plugins Claude Code en scope user (adhd, tmux-agent-sidebar, brag, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
+  claude-plugins  plugins Claude Code en scope user (adhd, brag, cc-plugin-you-should-know) + skills perso (overlay/claude/skills) + bloc géré dans ~/.claude/CLAUDE.md
   moshi     moshi-hook (getmoshi.app) : binaire, pairing (token de la couche privée), hooks agents, service systemd user
   cleanup   timer quotidien devbox-cleanup : VMs Incus *-sim arrêtées depuis 2 j, images Docker
             inutilisées, cache pacman, dumps Sonar non lus depuis 2 j
@@ -807,8 +807,14 @@ do_packages() {
   # d'abord en groupe (rapide), puis paquet par paquet, et on continue en
   # signalant ceux qui restent — au lieu de mourir. La liste est gardée dans
   # packages.skipped pour que `verify` ne les compte pas comme manquants.
+  # Base locale périmée (miroir qui a déjà purgé les versions qu'elle
+  # annonce → 404 au téléchargement, fréquent sur Arch Linux ARM) : on
+  # retente une fois avec -Syu (rafraîchit + met à niveau, jamais de mise à
+  # jour partielle -Sy seule) avant le repli paquet par paquet.
   local failed=()
-  if ! asroot pacman -S --needed --noconfirm "${pkgs[@]}"; then
+  if ! asroot pacman -S --needed --noconfirm "${pkgs[@]}" \
+     && ! { warn "installation groupée échouée — base pacman rafraîchie (-Syu) puis nouvel essai"
+            asroot pacman -Syu --needed --noconfirm "${pkgs[@]}"; }; then
     warn "installation groupée échouée (souvent un conflit avec un paquet déjà installé) — repli paquet par paquet"
     for p in "${pkgs[@]}"; do
       asroot pacman -S --needed --noconfirm "$p" || failed+=("$p")
@@ -985,17 +991,19 @@ do_skel() {
   fi
   [[ -d /etc/skel ]] || die "/etc/skel absent — l'étape ③ a-t-elle réussi ?"
 
-  # cp -af ÉCRASE : on sauvegarde ce qui existe déjà et qui serait touché
+  # cp -af ÉCRASE : on sauvegarde ce qui existe déjà et qui serait touché.
+  # Fichier par fichier, PAS les dossiers de 1er niveau : sauvegarder tout
+  # ~/.local recopiait $STATE_DIR/backup dans lui-même (backup imbriqué).
   local touched=() src rel
   while IFS= read -r -d '' src; do
     rel="${src#/etc/skel/}"
-    [[ -e "$HOME/$rel" ]] && touched+=("$rel")
-  done < <(find /etc/skel -mindepth 1 -maxdepth 1 -print0)
+    [[ -e "$HOME/$rel" || -L "$HOME/$rel" ]] && touched+=("$rel")
+  done < <(find /etc/skel -mindepth 1 \( -type f -o -type l \) -print0)
 
   if (( ${#touched[@]} )); then
     run mkdir -p "$BACKUP_DIR"
     for rel in "${touched[@]}"; do
-      run cp -a "$HOME/$rel" "$BACKUP_DIR/" 2>/dev/null || true
+      (cd "$HOME" && run cp -a --parents "$rel" "$BACKUP_DIR/") 2>/dev/null || true
     done
     warn "${#touched[@]} entrées existantes écrasées → sauvegardées dans $BACKUP_DIR"
   fi
@@ -1044,7 +1052,6 @@ do_vendor() {
 # On ne l'installe pas → on rétablit la même chaîne depuis le dépôt vendoré.
 DOTCONFIGS=(
   config/starship.toml:.config/starship.toml
-  config/tmux/tmux.conf:.config/tmux/tmux.conf
   config/lazygit/config.yml:.config/lazygit/config.yml
   config/btop/btop.conf:.config/btop/btop.conf
   config/git/config:.config/git/config
@@ -1159,6 +1166,37 @@ file = \"$SCRIPT_DIR/pkg-add.sh\""
   fi
 }
 
+# lazygit : presse-papier sans xclip/xsel/wl-clipboard (poste headless, SSH).
+# Le config.yml vient d'Omarchy (DOTCONFIGS, réécrit à chaque passage) : notre
+# surcouche vit à part, ~/.config/devbox/lazygit.yml, empilée via
+# LG_CONFIG_FILE (rc.d/50-clip.sh).
+install_lazygit_overlay() {
+  local src="$OVERLAY_DIR/lazygit/devbox.yml" dst="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/lazygit.yml"
+  [[ -r "$src" ]] || return 0
+  run mkdir -p "${dst%/*}"
+  run cp -af "$src" "$dst"
+  ok "lazygit : presse-papier pbcopy / OSC 52 → $dst"
+}
+
+# tmux n'est plus utilisé : retire ce que les anciennes versions avaient posé
+# (rc.d, plugin tmux-agent-sidebar, overlay devbox.conf). Le paquet tmux,
+# lui, n'est pas désinstallé (pacman -Rns tmux à la main si voulu).
+remove_tmux_leftovers() {
+  local p gone=()
+  for p in "$RC_D/50-tmux.sh" "$HOME/.tmux/plugins/tmux-agent-sidebar" "$HOME/.config/tmux/devbox.conf"; do
+    [[ -e "$p" || -L "$p" ]] || continue
+    run rm -rf "$p"; gone+=("${p/#$HOME/\~}")
+  done
+  (( DRY_RUN )) || rmdir "$HOME/.tmux/plugins" "$HOME/.tmux" 2>/dev/null || true
+  local conf="$HOME/.config/tmux/tmux.conf"
+  if grep -q 'devbox.conf' "$conf" 2>/dev/null; then
+    run sed -i '/^# devbox (géré par bootstrap.sh)$/d; /^source-file -q ~\/.config\/tmux\/devbox.conf$/d' "$conf"
+    gone+=("ligne devbox de tmux.conf")
+  fi
+  (( ${#gone[@]} )) && ok "restes tmux retirés : ${gone[*]}"
+  return 0
+}
+
 install_git_identity() {
   [[ -r "$OVERLAY_DIR/git/identity" ]] || return 0
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/git" inc
@@ -1206,6 +1244,7 @@ do_shell_light() {
   configure_starship_hostname
   install_git_identity
   install_mise_global_tasks
+  install_lazygit_overlay
 
   # rc.d « sûrs » sur un vrai Omarchy : SEULS ceux-là sont posés ici —
   # 10-env.sh forcerait OMARCHY_THEME_HEADLESS=1 et un OMARCHY_PATH devbox,
@@ -1218,6 +1257,7 @@ do_shell_light() {
     run cp -af "$OVERLAY_DIR/bash/rc.d/$f" "$RC_D/$f"
     copied+=("$f")
   done
+  remove_tmux_leftovers
   sync_private
   (( ${#copied[@]} )) || return 0
   ok "rc.d déposés → $RC_D : ${copied[*]}"
@@ -1288,10 +1328,12 @@ do_shell() {
     run cp -af "$src" "$HOME/$rel"
     n=$((n+1))
   done
-  ok "$n configs installées (starship.toml, tmux, lazygit, btop, git)"
+  ok "$n configs installées (starship.toml, lazygit, btop, git)"
   configure_starship_hostname
   install_git_identity
   install_mise_global_tasks
+  install_lazygit_overlay
+  remove_tmux_leftovers
 
   # terminfo Ghostty (TERM=xterm-ghostty) : Ghostty ne le publie pas en tant
   # que source (généré à sa compilation) et [omarchy] ne le publie qu'en
@@ -1306,101 +1348,6 @@ do_shell() {
     else
       warn "tic a échoué sur $ti_src — TERM=xterm-ghostty restera cassé en SSH"
     fi
-  fi
-}
-
-# =============================================================== ⑦b tmux ====
-# tmux.conf vient d'Omarchy (recopié par l'étape shell à chaque passage) : on
-# n'y ajoute qu'UNE ligne, qui charge notre overlay ~/.config/tmux/devbox.conf.
-# Plugin tmux-agent-sidebar en install manuelle (pas de TPM) : clone + binaire
-# de release, retéléchargé quand la version du Cargo.toml change. Les hooks
-# Claude Code viennent du plugin Claude (étape claude-plugins), dont hook.sh
-# retombe sur le binaire posé ici.
-SIDEBAR_REPO="https://github.com/hiroppy/tmux-agent-sidebar.git"
-SIDEBAR_DIR="$HOME/.tmux/plugins/tmux-agent-sidebar"
-do_tmux() {
-  step "⑦b" "tmux : overlay devbox.conf + plugin tmux-agent-sidebar"
-  has tmux || { skip "tmux absent — étape sautée"; return 0; }
-
-  # plugin : clone ou mise à jour (les patchs d'un passage précédent sont
-  # d'abord retirés, sinon le pull refuse d'écraser l'arbre modifié)
-  if [[ -d "$SIDEBAR_DIR/.git" ]]; then
-    run git -C "$SIDEBAR_DIR" checkout -q -- .
-    run git -C "$SIDEBAR_DIR" pull -q --ff-only \
-      || warn "tmux-agent-sidebar : mise à jour impossible — version actuelle conservée"
-  else
-    run mkdir -p "${SIDEBAR_DIR%/*}"
-    run git clone -q --depth 1 "$SIDEBAR_REPO" "$SIDEBAR_DIR" \
-      || { warn "clone de $SIDEBAR_REPO impossible — plugin sauté"; return 0; }
-  fi
-
-  local bin="$SIDEBAR_DIR/bin/tmux-agent-sidebar" want have arch
-  want="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$SIDEBAR_DIR/Cargo.toml" 2>/dev/null)"
-
-  # patchs locaux (overlay/tmux/patches/tmux-agent-sidebar/*.patch) : appliqués
-  # sur le clone puis compilés avec cargo. Un tampon (commit amont + patchs)
-  # évite de recompiler quand rien n'a changé. À retirer dès qu'ils sont
-  # intégrés en amont : un patch qui ne s'applique plus le signale.
-  #   0001 : PR #149, le nom de session ne clignote plus (ticket #112)
-  #   0002 : le libellé reprend le titre de la conversation Claude
-  local patches=("$OVERLAY_DIR"/tmux/patches/tmux-agent-sidebar/*.patch) stamp f
-  [[ -e "${patches[0]}" ]] || patches=()
-  if (( ${#patches[@]} )) && ! (( DRY_RUN )); then
-    stamp="$(git -C "$SIDEBAR_DIR" rev-parse HEAD) $(cat "${patches[@]}" | sha256sum | cut -c1-16)"
-    for f in "${patches[@]}"; do
-      git -C "$SIDEBAR_DIR" apply "$f" \
-        || { warn "patch ${f##*/} ne s'applique plus (intégré en amont ?) — patchs ignorés"; git -C "$SIDEBAR_DIR" checkout -q -- .; patches=(); break; }
-    done
-  fi
-  if (( ${#patches[@]} )) && ! (( DRY_RUN )); then
-    if [[ "$(cat "$bin.patched" 2>/dev/null)" == "$stamp" && -x "$bin" ]]; then
-      ok "tmux-agent-sidebar $want patché déjà installé (${#patches[@]} patchs)"
-      patches=(done)
-    elif ! has cargo; then
-      warn "cargo absent — patchs tmux-agent-sidebar non compilés, binaire de release à la place (pacman -S rust pour les avoir)"
-      git -C "$SIDEBAR_DIR" checkout -q -- .
-      patches=()
-    elif (cd "$SIDEBAR_DIR" && cargo build -q --release 2>&1 | tail -5) \
-         && mkdir -p "${bin%/*}" && cp -f "$SIDEBAR_DIR/target/release/tmux-agent-sidebar" "$bin.tmp" && mv "$bin.tmp" "$bin"; then
-      printf '%s\n' "$stamp" > "$bin.patched"
-      ok "tmux-agent-sidebar $want compilé avec ${#patches[@]} patchs → $bin"
-      patches=(done)
-    else
-      warn "compilation de tmux-agent-sidebar échouée — binaire de release à la place"
-      git -C "$SIDEBAR_DIR" checkout -q -- .
-      patches=()
-    fi
-  fi
-
-  # sinon : binaire de release GitHub pour cet ARCH, si absent ou d'une autre version
-  if (( ! ${#patches[@]} )); then
-    have="$("$bin" version 2>/dev/null || true)"
-    case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) arch="" ;; esac
-    if [[ -n "$want" && "$have" == "$want" && ! -e "$bin.patched" ]]; then
-      ok "tmux-agent-sidebar $have déjà installé"
-    elif [[ -z "$arch" ]]; then
-      warn "tmux-agent-sidebar : pas de binaire pour $(uname -m) — cargo build --release dans $SIDEBAR_DIR"
-    elif runsh "mkdir -p '${bin%/*}' && curl -fsSL 'https://github.com/hiroppy/tmux-agent-sidebar/releases/download/v$want/tmux-agent-sidebar-linux-$arch' -o '$bin.tmp' && chmod +x '$bin.tmp' && mv '$bin.tmp' '$bin' && rm -f '$bin.patched'"; then
-      ok "tmux-agent-sidebar $want installé → $bin"
-    else
-      warn "téléchargement du binaire tmux-agent-sidebar $want échoué — le plugin lancera son assistant au démarrage de tmux"
-    fi
-  fi
-
-  # overlay + ligne de chargement dans tmux.conf
-  local conf="$HOME/.config/tmux/tmux.conf" line="source-file -q ~/.config/tmux/devbox.conf"
-  run mkdir -p "$HOME/.config/tmux"
-  run cp -af "$OVERLAY_DIR/tmux/devbox.conf" "$HOME/.config/tmux/devbox.conf"
-  if grep -qxF "$line" "$conf" 2>/dev/null; then
-    ok "devbox.conf déjà chargé par tmux.conf"
-  else
-    runsh "printf '\n# devbox (géré par bootstrap.sh)\n%s\n' '$line' >> '$conf'"
-    ok "devbox.conf chargé depuis $conf"
-  fi
-
-  # serveur tmux vivant : recharge pour prendre le plugin sans redémarrer
-  if ! (( DRY_RUN )) && tmux info >/dev/null 2>&1; then
-    tmux source-file "$conf" >/dev/null 2>&1 && ok "config rechargée dans le serveur tmux actif"
   fi
 }
 
@@ -1422,12 +1369,6 @@ do_theme() {
 
   run omarchy-theme-set "$THEME" || die "thème '$THEME' inconnu (voir $OMARCHY_HOME/themes/)"
   ok "thème appliqué → ~/.local/state/omarchy/current/theme/"
-
-  # tmux : volontairement PAS d'omarchy-theme-set-tmux. Il fixe window-style
-  # (fond du thème) et réécrit la palette de chaque volet du serveur vivant :
-  # rejoué par sync-fleet, il repeignait les sessions ouvertes par-dessus le
-  # fond du terminal client (Ghostty). Sans serveur vivant, il n'a aucun effet
-  # durable. tmux garde donc les couleurs du terminal (tmux.conf : bg=default).
 
   # zellij : un lien + une ligne de config, zéro code
   if has zellij; then
@@ -1920,7 +1861,14 @@ do_claude_plugins() {
   has claude || { skip "claude absent — plugins sautés"; return 0; }
   # Format : "<plugin>@<marketplace> <source github>"
   local p id mkt src
-  for p in "adhd@adhd UditAkhourii/adhd" "tmux-agent-sidebar@hiroppy hiroppy/tmux-agent-sidebar" "brag@brag latent-spaces/brag"; do
+  # tmux n'est plus utilisé : le plugin tmux-agent-sidebar (et ses hooks
+  # Claude) est désinstallé s'il traîne d'une version précédente.
+  if ! (( DRY_RUN )) && claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy$'; then
+    claude plugin uninstall tmux-agent-sidebar@hiroppy --scope user >/dev/null 2>&1 \
+      && ok "plugin claude tmux-agent-sidebar désinstallé (tmux abandonné)" \
+      || warn "désinstallation de tmux-agent-sidebar échouée — à la main : claude plugin uninstall tmux-agent-sidebar@hiroppy"
+  fi
+  for p in "adhd@adhd UditAkhourii/adhd" "brag@brag latent-spaces/brag"; do
     read -r id src <<<"$p"; mkt="${id#*@}"
     if (( DRY_RUN )); then
       info "claude plugin install $id (dry-run, non exécuté)"
@@ -2189,8 +2137,9 @@ do_verify() {
   # mise garde un lien par config chargée/approuvée : projets supprimés et
   # scratchpads /tmp en laissent des morts en continu → on les oublie d'abord.
   (( DRY_RUN )) || { has mise && mise prune --configs >/dev/null 2>&1; }
-  # en échec : nombre + premier lien mort (sinon la ligne ❌ reste muette)
-  check "aucun lien cassé"        "l=\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -xtype l -not -name 'Singleton*' -not -name '*-runtime' 2>/dev/null); test -z \"\$l\" && echo '0 lien mort' || { echo \"\$(wc -l <<<\"\$l\") : \${l#\$HOME/}\" | head -1; false; }"
+  # Sauvegardes devbox exclues : un lien RELATIF recopié ailleurs casse forcément.
+  # En échec, la sortie affiche le 1er lien mort (plus un ❌ muet).
+  check "aucun lien cassé"        "l=\$(find \"\$HOME/.config\" \"\$HOME/.local/state\" -path '$STATE_DIR/backup' -prune -o -xtype l -not -name 'Singleton*' -not -name '*-runtime' -print 2>/dev/null); test -z \"\$l\" && echo '0 lien mort' || { printf '%s\n' \"\$l\" | head -1 | sed \"s|^\$HOME/||\"; exit 1; }"
   (( full )) && check "thème appliqué (nvim)"   "grep -ho 'colorscheme[^,}]*' \"\$HOME/.local/state/omarchy/current/theme/neovim.lua\" | head -1"
   has atuin     && check "atuin"                "atuin --version"
   (( full )) && has zellij && check "zellij config valide" "zellij setup --check 2>&1 | grep -qi 'well defined' && echo 'Well defined'"
@@ -2223,7 +2172,6 @@ do_verify() {
   has claude && check "claude installé"    "claude --version 2>&1 | head -1"
   has claude && check "plugin claude adhd" "claude plugin list 2>/dev/null | grep -q '❯ adhd@adhd\$'"
   has claude && check "plugin claude brag" "claude plugin list 2>/dev/null | grep -q '❯ brag@brag\$'"
-  has tmux   && check "tmux-agent-sidebar"  "\"\$HOME/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar\" version && grep -qxF 'source-file -q ~/.config/tmux/devbox.conf' \"\$HOME/.config/tmux/tmux.conf\""
   has claude && check "plugin claude you-should-know" "grep -q '\"cc-plugin-you-should-know@builtin\": *true' \"\$HOME/.claude/settings.json\" && echo activé"
   for _sk in "$OVERLAY_DIR"/claude/skills/*/; do
     _sk="${_sk%/}"; _sk="${_sk##*/}"
@@ -2232,7 +2180,6 @@ do_verify() {
   has moshi-hook && check "moshi-hook pairé" "moshi-hook status 2>/dev/null | grep -q '^status: *paired' && moshi-hook status | sed -n 's/^display name: *//p'"
   has moshi-hook && check "service moshi-hook" "systemctl --user is-active moshi-hook"
   check "timer devbox-cleanup" "systemctl is-active devbox-cleanup.timer"
-  has claude && check "plugin claude tmux-agent-sidebar" "claude plugin list 2>/dev/null | grep -q '❯ tmux-agent-sidebar@hiroppy\$'"
   has claude && check "claude authentifié" "claude auth status --json 2>/dev/null | grep -q '\"loggedIn\": *true' && claude auth status --json 2>/dev/null | grep -o '\"email\": *\"[^\"]*\"' | head -1"
 
   printf '\n'
@@ -2282,7 +2229,6 @@ main() {
       skel)      do_skel ;;
       vendor)    do_vendor ;;
       shell)     do_shell ;;
-      tmux)      do_tmux ;;
       theme)     do_theme ;;
       tailscale) do_tailscale ;;
       cli-auth)  do_cli_auth ;;

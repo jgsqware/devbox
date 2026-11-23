@@ -1,0 +1,9 @@
+# devbox — surcouche lazygit, empilée après le config.yml d'Omarchy via
+# LG_CONFIG_FILE (rc.d/50-clip.sh). Poste headless : ni xclip, ni xsel, ni
+# wl-clipboard → pbcopy (OrbStack) sinon OSC 52 vers le terminal hôte.
+os:
+  copyToClipboardCmd: >-
+    if command -v pbcopy >/dev/null; then printf '%s' {{text}} | pbcopy;
+    else printf '\033]52;c;%s\a' "$(printf '%s' {{text}} | base64 | tr -d '\n')" > /dev/tty; fi
+  readFromClipboardCmd: >-
+    command -v pbpaste >/dev/null && pbpaste

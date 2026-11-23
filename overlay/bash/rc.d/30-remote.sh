@@ -39,8 +39,8 @@ declare -F _known_hosts >/dev/null && complete -F _known_hosts s
 
 # tohost <fichier…> : envoie les fichiers dans ~/Downloads du Mac d'où l'on
 # est connecté, puis les met dans SON presse-papier comme un Cmd+C du Finder
-# (Cmd+V dans Slack les joint). Hôte = IP cliente de la connexion SSH (dans
-# tmux : celle du dernier client attaché) ; surcharge : DEVBOX_HOST=<hôte>.
+# (Cmd+V dans Slack les joint). Hôte = IP cliente de la connexion SSH ;
+# surcharge : DEVBOX_HOST=<hôte>.
 # Prérequis : la clé de cet hôte autorisée sur le Mac (ssh sans mot de passe).
 tohost() {
   (( $# )) || { echo "usage: tohost <fichier…>" >&2; return 1; }
@@ -52,7 +52,6 @@ tohost() {
   host=${DEVBOX_HOST:-}
   if [[ -z $host ]]; then
     conn=$SSH_CONNECTION
-    [[ -n $TMUX ]] && conn=$(tmux show-environment SSH_CONNECTION 2>/dev/null | sed -n 's/^SSH_CONNECTION=//p')
     host=${conn%% *}
   fi
   [[ -n $host ]] || { echo "tohost: pas de session SSH détectée — DEVBOX_HOST=<hôte>" >&2; return 1; }

@@ -38,7 +38,7 @@ bw() {
 }
 
 # copie dans le presse-papier, puis le vide au bout de 30 s.
-#   tmux             → clip (50-tmux.sh : load-buffer -w)
+#   tmux             → clip (50-clip.sh)
 #   Rex, SSH…        → OSC 52 sur le terminal : arrive sur la machine qui
 #                      AFFICHE le terminal (le Mac du client Rex)
 #   terminal local   → pbcopy (OrbStack : presse-papier du Mac hôte, qui
