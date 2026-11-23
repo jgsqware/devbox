@@ -49,15 +49,17 @@ step "checks"
 has git || die "git absent"
 has rex || die "rex absent : installe Rex for Mac (son CLI pose \`rex\`)"
 ok "rex $(command -v rex)"
-if ! has go; then
+# `go version` et pas `has go` : un shim mise sans version globale existe mais échoue
+go_ok() { go version >/dev/null 2>&1; }
+if ! go_ok; then
   if has mise; then
     run mise use -g go@latest || die "mise n'a pas pu installer go"
-    has go || (( DRY_RUN )) || eval "$(mise activate bash --shims)"
+    go_ok || (( DRY_RUN )) || eval "$(mise activate bash --shims)"
   else
     die "go absent, et mise aussi"
   fi
 fi
-has go && ok "$(go version)"
+if go_ok; then ok "$(go version)"; else (( DRY_RUN )) || die "go inutilisable"; fi
 IS_SERVE=0; [[ -f "$SERVE_PLIST" ]] && IS_SERVE=1
 (( IS_SERVE )) && info "ce Mac fait tourner ov serve : ~/.local/bin/ov ne sera pas touché"
 
