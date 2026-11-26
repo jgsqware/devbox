@@ -141,7 +141,7 @@ Zen (container)──▶ socks://<hôte>:1080 ───────────�
 | `ssh dev` / `iba` / `wk` | `Host dev iba wk` : `HostName %h.tail98dd.ts.net`, `ProxyCommand nc -X 5 -x localhost:1080 %h %p` | `bootstrap --with-socks5-local` (microsocks `127.0.0.1:1080`, publié par OrbStack) | `gaming1 → <hôte> tcp:22` |
 | Rex des devbox | `Host rex-tunnel` (`LocalForward 127.0.0.1:1729x <hôte>.tail98dd.ts.net:7297`), lancé par `~/Library/LaunchAgents/local.rex-tunnel.plist` (`ssh -N rex-tunnel`, KeepAlive) | serveur Rex de chaque hôte (`rex.service`, `tailnet://:7297`) | `gaming1 → dev,iba,wk tcp:7297` |
 | Rex du Mac mini | même tunnel, `LocalForward …/mini.sock /run/user/502/rex-relay.sock` | `bootstrap --with-rex-relay` (socat → `https://juliens-mac-mini-rex…ts.net`) | `gaming1 → mini-rex tcp:443` |
-| navigateur par identité | Zen, proxy du container `socks://<hôte>:1080` | — (c'est le `devbox-socks5` de chaque hôte) | `gaming1 → <hôte> tcp:1080` |
+| navigateur par identité | Zen, proxy du container `socks://<hôte>:1080` (ne passe pas par gaming1) | `--with-socks5-relay iba…:1080` (`127.0.0.1:1081`) | ⚠️ `tcp:1080` vers les hôtes a été **refusé** à gaming1 (décision mind #z66t03 : rebond avec l'identité de l'hôte) : le relais iba `:1081` ne passe plus |
 
 Diagnostic quand « ça ne se connecte plus » :
 
