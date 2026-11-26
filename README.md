@@ -122,6 +122,42 @@ l'export `.rayconfig`.
 ./macos/bootstrap.sh --only apps     # seulement les configs d'apps (= mise run macos-scripts-install)
 ```
 
+## Depuis le Mac : joindre les hôtes de la tailnet
+
+Le Mac n'est **pas** sur la tailnet (pas de Tailscale.app). Tout passe par la
+VM OrbStack `gaming1`, qui y est : un tunnel SSH par usage, jamais un VPN côté Mac.
+
+```
+Mac (hors tailnet)                 gaming1 (VM OrbStack, tailnet)          hôtes
+ssh dev|iba|wk ──▶ SOCKS5 localhost:1080 ──▶ devbox-socks5-local ──▶ <hôte>:22 (Tailscale SSH)
+Rex for Mac    ──▶ localhost:17297/8/9  ──▶ ssh -N rex-tunnel      ──▶ dev|iba|wk:7297
+               ──▶ ~/.local/state/rex-tunnel/gaming1.sock ─────────▶ /run/user/502/rex/server.sock
+               ──▶ ~/.local/state/rex-tunnel/mini.sock ──▶ devbox-rex-relay ──▶ mini-rex:443
+Zen (container)──▶ socks://<hôte>:1080 ──────────────────────────────▶ devbox-socks5 de l'hôte
+```
+
+| Usage | Côté Mac (`~/.ssh/config`) | Côté gaming1 | Règle ACL Tailscale |
+|---|---|---|---|
+| `ssh dev` / `iba` / `wk` | `Host dev iba wk` : `HostName %h.tail98dd.ts.net`, `ProxyCommand nc -X 5 -x localhost:1080 %h %p` | `bootstrap --with-socks5-local` (microsocks `127.0.0.1:1080`, publié par OrbStack) | `gaming1 → <hôte> tcp:22` |
+| Rex des devbox | `Host rex-tunnel` (`LocalForward 127.0.0.1:1729x <hôte>.tail98dd.ts.net:7297`), lancé par `~/Library/LaunchAgents/local.rex-tunnel.plist` (`ssh -N rex-tunnel`, KeepAlive) | serveur Rex de chaque hôte (`rex.service`, `tailnet://:7297`) | `gaming1 → dev,iba,wk tcp:7297` |
+| Rex du Mac mini | même tunnel, `LocalForward …/mini.sock /run/user/502/rex-relay.sock` | `bootstrap --with-rex-relay` (socat → `https://juliens-mac-mini-rex…ts.net`) | `gaming1 → mini-rex tcp:443` |
+| navigateur par identité | Zen, proxy du container `socks://<hôte>:1080` | — (c'est le `devbox-socks5` de chaque hôte) | `gaming1 → <hôte> tcp:1080` |
+
+Diagnostic quand « ça ne se connecte plus » :
+
+```bash
+# Mac : le tunnel tourne ? ses forwards répondent ?
+launchctl list | grep rex-tunnel ; tail /tmp/rex-tunnel.log
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:17297/        # 404 = Rex répond
+# gaming1 : l'hôte est joignable sur le bon port ?
+timeout 5 bash -c 'exec 3<>/dev/tcp/dev.tail98dd.ts.net/7297' && echo ok
+```
+
+`connect failed: dial tcp <ip>:7297: i/o timeout` dans `/tmp/rex-tunnel.log` alors
+que `ssh <hôte>` passe depuis gaming1 = **règle ACL manquante** sur ce port (un
+refus pare-feu donnerait `connection refused`). Le tunnel n'a pas besoin d'être
+relancé après correction : chaque connexion Rex rouvre un canal.
+
 ## Navigateur : Zen, une instance, un container par identité
 
 Remplace Brave (une instance par proxy + profil M365 UA Linux), Teams v2 et la WebApp Safari.
