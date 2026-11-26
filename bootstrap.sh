@@ -1141,9 +1141,13 @@ go = \"latest\"
 
 [tasks.pkg-add]
 description = \"devbox : cherche, installe, ajoute à packages.txt, commite, pousse, resync la flotte\"
-file = \"$SCRIPT_DIR/pkg-add.sh\""
+file = \"$SCRIPT_DIR/pkg-add.sh\"
+
+[tasks.deck]
+description = \"ov deck dans ce pane Rex : les agents de toutes les machines (app Rex détectée, ou [app])\"
+file = \"$SCRIPT_DIR/deck.sh\""
   if [[ -f "$f" && "$(cat "$f")" == "$want" ]]; then
-    ok "tâche mise globale pkg-add déjà en place"
+    ok "tâches mise globales pkg-add et deck déjà en place"
     return 0
   fi
   run mkdir -p "$(dirname "$f")"

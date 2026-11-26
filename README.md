@@ -45,6 +45,7 @@ mise run upgrade [-- -n]                         # met à jour pacman, AUR, mise
 mise run packages [-- -n]                        # installe packages.txt sur ce poste (sans pull)
 mise run pkg-commit [-- -n]                      # commite packages.txt, message généré depuis le diff
 mise run pkg-add [paquet…] [-s section] [-y] [-n] [--no-sync]   # GLOBAL (de n'importe où) : cherche dépôts+AUR, installe, ajoute, commite, pousse, resync
+mise run deck [app]                              # GLOBAL : ov deck dans ce pane Rex (app Rex détectée, ou celle donnée)
 mise run pull                                    # juste la mise à jour, sans lancer bootstrap
 mise run bootstrap-only -- -n                    # sans pull (offline / debug)
 ```
@@ -84,6 +85,7 @@ cd ~/devbox && ./bootstrap.sh --from repo
 | `overlay/bash/rc.d/*.sh` | **les réglages shell** — déposés dans `~/.config/devbox/rc.d/` |
 | `overlay/omarchy/themed/*.tpl` | cibles de thème supplémentaires (zellij) |
 | `overlay/terminfo/xterm-ghostty.terminfo` | entrée terminfo Ghostty, compilée par `tic` à l'étape ⑦ |
+| `deck.sh` | `mise run deck [app]` (tâche globale) : `ov deck` dans ce pane Rex, pour l'app Rex qui l'affiche ou celle donnée |
 | `sync-fleet.sh` | rejoue le bootstrap sur toutes les machines `tag:omarchy` de la tailnet (`mise run sync`) |
 | `macos/omarchy-ghostty-theme` | thèmes Omarchy pour Ghostty **sur le poste hôte macOS** (voir plus bas) |
 | `TODO.md` | tâches en attente sur la flotte |

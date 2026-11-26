@@ -13,6 +13,7 @@
 #   mise run pkg-commit [-- -n]           commite packages.txt, message généré depuis le diff (-n : l'affiche)
 #   mise run pkg-add <paquet> [-n]        GLOBALE (posée par bootstrap) : cherche, installe, ajoute, commite, pousse
 #   mise run warp-reauth [hôte] [url]     ré-auth WARP sur l'hôte distant (fonction de la couche privée)
+#   mise run deck [app]                   GLOBALE : `ov deck` dans ce pane Rex (app Rex détectée, ou celle donnée)
 #   mise run ov [-- -n] [--from HOST]     macOS : installe/met à jour ov (~/code/ov, build, config du Mac mini, hôtes Rex)
 
 [tasks.pull]
@@ -65,3 +66,7 @@ run = "./macos/bootstrap.sh --only apps"
 [tasks.ov]
 description = "macOS : installe/met à jour ov (clone ~/code/ov, build, config du Mac mini, hôtes Rex)"
 run = "./macos/ov.sh"
+
+[tasks.deck]
+description = "ov deck dans ce pane Rex : les agents de toutes les machines (app Rex détectée, ou [app])"
+file = "deck.sh"
