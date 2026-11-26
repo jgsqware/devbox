@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# devbox-rex-scope PID — sort une session Rex du groupe commun de rex.service
+# et la place dans son propre scope systemd, plafonné en mémoire.
+#
+# Plan d'archi #fvr63b (phase 1, tâche #wqthv9), incident #2yhrpb : toutes les
+# sessions Rex partageaient le groupe mémoire de rex.service ; un manque de
+# mémoire pouvait tuer n'importe laquelle. Ici, chaque session a sa limite :
+# freinée à REX_SCOPE_HIGH_PCT % de la mémoire de l'hôte, tuée seule au-delà
+# de REX_SCOPE_MAX_PCT % (+ 1 Go de swap au plus : le zram absorberait tout).
+#
+# Rex est fermé (superlogical) : on ne peut pas changer son lancement. Le shell
+# de la session appelle ce script au démarrage (~/.bashrc, avant le retour non
+# interactif), seulement s'il tourne directement dans rex.service. Tout ce que
+# la session lance ensuite hérite du scope.
+#
+# Installé seulement sur dev et devmac (étape memcaps de bootstrap.sh) ; absent
+# ailleurs, l'appel du ~/.bashrc ne fait rien.
+# Voir : systemctl --user list-units 'rex-session-*'
+# Retour arrière : sudo rm /usr/local/bin/devbox-rex-scope (les sessions déjà
+# placées gardent leur scope jusqu'à leur fin).
+set -uo pipefail
+pid="${1:-}"
+[[ "$pid" =~ ^[0-9]+$ ]] || exit 0
+high_pct="${REX_SCOPE_HIGH_PCT:-40}"
+max_pct="${REX_SCOPE_MAX_PCT:-50}"
+[[ "$high_pct" =~ ^[0-9]+$ && "$max_pct" =~ ^[0-9]+$ ]] || exit 0
+(( high_pct >= 10 && high_pct <= max_pct && max_pct <= 90 )) || exit 0
+
+# seulement une session encore dans le groupe commun de rex.service
+read -r cg < "/proc/$pid/cgroup" 2>/dev/null || exit 0
+[[ "$cg" == */rex.service ]] || exit 0
+command -v busctl >/dev/null 2>&1 || exit 0
+
+total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+high=$(( total_kb * 1024 * high_pct / 100 ))
+max=$(( total_kb * 1024 * max_pct / 100 ))
+unit="rex-session-$pid-$(date +%s).scope"
+
+busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager StartTransientUnit 'ssa(sv)a(sa(sv))' \
+  "$unit" fail 6 \
+  PIDs au 1 "$pid" \
+  MemoryHigh t "$high" \
+  MemoryMax t "$max" \
+  MemorySwapMax t $(( 1024 * 1024 * 1024 )) \
+  CollectMode s inactive-or-failed \
+  Description s "Session Rex (pid $pid), plafond ${max_pct} % de la mémoire" \
+  0 >/dev/null 2>&1 || exit 0

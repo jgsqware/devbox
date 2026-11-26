@@ -26,6 +26,16 @@ if [[ "$OSTYPE" == darwin* ]]; then
   export PATH
 fi
 
+# Session Rex (dev, devmac) : sort du groupe commun de rex.service vers son
+# propre scope plafonné en mémoire (étape memcaps, plan #fvr63b). Avant le
+# return : `bash -lc cmd` (sessions ov) n'est pas interactif. Sans le script
+# (autres machines), rien ne se passe.
+if [[ -x /usr/local/bin/devbox-rex-scope ]]; then
+  read -r _cg < "/proc/$$/cgroup" 2>/dev/null
+  [[ "${_cg:-}" == */rex.service ]] && /usr/local/bin/devbox-rex-scope "$$"
+  unset _cg
+fi
+
 # Non interactif : on s'arrête ici (OMARCHY_PATH et PATH sont posés).
 [[ $- != *i* ]] && return
 

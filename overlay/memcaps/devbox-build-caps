@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# devbox-build-caps — plafonne la mémoire des moteurs de build de l'hôte.
+#
+# Plan d'archi #fvr63b, incident #2yhrpb (devmac, 22/11) : des compilations Go
+# parallèles ont saturé la mémoire de toute la VM et tué les sessions Claude.
+# Les compilations tournent DANS les moteurs (Dagger, buildkit de buildx), où
+# GOFLAGS n'arrive pas : on plafonne donc ces conteneurs. Une compilation qui
+# déborde est tuée dans son moteur, jamais une session ni le reste de l'hôte.
+#
+# Chaque moteur reçoit BUILD_CAP_PCT % de la mémoire de l'hôte (défaut 30), plus
+# 1 Go de swap. Idempotent ; relancé par devbox-build-caps.timer, il rattrape
+# les moteurs recréés (mise à jour de Dagger, nouveau builder buildx).
+# Retour arrière : docker update --memory 0 --memory-swap -1 <conteneur>.
+set -euo pipefail
+command -v docker >/dev/null 2>&1 || exit 0
+pct="${BUILD_CAP_PCT:-30}"
+[[ "$pct" =~ ^[0-9]+$ ]] && (( pct >= 10 && pct <= 80 )) || { echo "BUILD_CAP_PCT invalide : $pct" >&2; exit 1; }
+total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+cap=$(( total_kb * 1024 * pct / 100 ))
+swap=$(( cap + 1024 * 1024 * 1024 ))
+docker ps --format '{{.Names}}' | grep -E '^(dagger-engine|buildx_buildkit_)' | while read -r c; do
+  [ "$(docker inspect -f '{{.HostConfig.Memory}}' "$c")" = "$cap" ] && continue
+  if docker update --memory "$cap" --memory-swap "$swap" "$c" >/dev/null; then
+    echo "$c : plafond $(( cap / 1024 / 1024 )) Mo (+1 Go de swap)"
+  else
+    echo "$c : plafond non appliqué" >&2
+  fi
+done

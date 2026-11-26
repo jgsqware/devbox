@@ -57,7 +57,7 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins moshi cleanup hooks verify)
+STEPS=(user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins moshi cleanup memcaps hooks verify)
 DRY_RUN=0
 FORCE_SKEL=0
 FORCE_FULL=0
@@ -79,6 +79,7 @@ LIVESYNC_URL=""                                       # opt-in — --with-livesy
 LIVESYNC_PORT="${DEVBOX_LIVESYNC_PORT:-5984}"
 WITH_REX=1                                            # actif par défaut — --no-rex : pas de serveur Rex joignable sur la tailnet
 REX_PORT="${DEVBOX_REX_PORT:-7297}"
+MEMCAPS_HOSTS=(dev devmac)                            # étape memcaps : SEULEMENT ces hôtes (hostname -s), plan #fvr63b
 SUDO_NOPASSWD=0
 NO_REEXEC=0
 ROOT_MODE=0
@@ -233,7 +234,7 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   -n, --dry-run         affiche les commandes sans rien exécuter
   -h, --help            cette aide
 
-Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins moshi cleanup hooks verify
+Étapes : user prereq repo packages locale hostname skel vendor shell theme tailscale cli-auth claude-plugins moshi cleanup memcaps hooks verify
 
   user      sudo + utilisateur + groupe wheel + sudoers   (ROOT uniquement)
   prereq    WSL: systemd=true, generateResolvConf=false, [user] default
@@ -258,6 +259,8 @@ devbox/bootstrap.sh — Arch nu ──▶ poste headless omarchy-flavored
   moshi     moshi-hook (getmoshi.app) : binaire, pairing (token de la couche privée), hooks agents, service systemd user
   cleanup   timer quotidien devbox-cleanup : VMs Incus *-sim arrêtées depuis 2 j, images Docker
             inutilisées, cache pacman, dumps Sonar non lus depuis 2 j
+  memcaps   SEULEMENT dev et devmac (MEMCAPS_HOSTS) : moteurs de build plafonnés à 30 % (timer 5 min)
+            + chaque session Rex dans son scope systemd (40 % / 50 % de la mémoire)
   hooks     core.hooksPath=hooks (commit → push → sync flotte) + gh comme helper git
   verify    la table de vérification de fin
 
@@ -2034,6 +2037,62 @@ WantedBy=timers.target"
     || warn "$CLEANUP_UNIT.timer non activé"
 }
 
+# ============================================================ ⑩e memcaps ===
+# Plafonds mémoire (plan #fvr63b, incident #2yhrpb) : un manque de mémoire tue
+# une compilation ou une session, jamais tout l'hôte. SEULEMENT sur les hôtes de
+# MEMCAPS_HOSTS (dev, devmac) ; ailleurs (machines clientes) l'étape est sautée.
+#  - devbox-build-caps (+ timer 5 min, root) : chaque moteur de build (Dagger,
+#    buildkit) plafonné à 30 % de la mémoire + 1 Go de swap ;
+#  - devbox-rex-scope : appelé par ~/.bashrc, place chaque session Rex dans son
+#    propre scope (freinée à 40 %, tuée seule au-delà de 50 % + 1 Go de swap).
+# Retour arrière : systemctl disable --now devbox-build-caps.timer ;
+# rm /usr/local/bin/devbox-rex-scope.
+BUILDCAPS_BIN=/usr/local/bin/devbox-build-caps
+BUILDCAPS_UNIT=devbox-build-caps
+REXSCOPE_BIN=/usr/local/bin/devbox-rex-scope
+do_memcaps() {
+  step "⑩e" "plafonds mémoire (moteurs de build, sessions Rex)"
+  local host h on=0 changed=0
+  host="$(hostname -s 2>/dev/null || echo '?')"
+  for h in "${MEMCAPS_HOSTS[@]}"; do [[ "$host" == "$h" ]] && on=1; done
+  (( on )) || { skip "hôte $host hors de MEMCAPS_HOSTS (${MEMCAPS_HOSTS[*]})"; return 0; }
+  [[ -d /run/systemd/system ]] || { skip "pas de systemd"; return 0; }
+  local svc="[Unit]
+Description=devbox — plafond mémoire des moteurs de build (Dagger, buildkit)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$BUILDCAPS_BIN"
+  local tmr="[Unit]
+Description=devbox — plafond mémoire des moteurs de build, toutes les 5 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target"
+  if (( DRY_RUN )); then
+    info "[dry-run] installerait $BUILDCAPS_BIN, $REXSCOPE_BIN + /etc/systemd/system/$BUILDCAPS_UNIT.{service,timer}"
+    return 0
+  fi
+  same_file "$OVERLAY_DIR/memcaps/devbox-build-caps" "$BUILDCAPS_BIN" \
+    || { asroot install -m 755 "$OVERLAY_DIR/memcaps/devbox-build-caps" "$BUILDCAPS_BIN"; changed=1; }
+  same_file "$OVERLAY_DIR/memcaps/devbox-rex-scope" "$REXSCOPE_BIN" \
+    || asroot install -m 755 "$OVERLAY_DIR/memcaps/devbox-rex-scope" "$REXSCOPE_BIN"
+  if [[ "$(cat "/etc/systemd/system/$BUILDCAPS_UNIT.service" 2>/dev/null)" != "$svc" ]]; then
+    printf '%s\n' "$svc" | asroot tee "/etc/systemd/system/$BUILDCAPS_UNIT.service" >/dev/null; changed=1
+  fi
+  if [[ "$(cat "/etc/systemd/system/$BUILDCAPS_UNIT.timer" 2>/dev/null)" != "$tmr" ]]; then
+    printf '%s\n' "$tmr" | asroot tee "/etc/systemd/system/$BUILDCAPS_UNIT.timer" >/dev/null; changed=1
+  fi
+  (( changed )) && asroot systemctl daemon-reload
+  asroot systemctl enable --now "$BUILDCAPS_UNIT.timer" >/dev/null 2>&1 \
+    && ok "$BUILDCAPS_UNIT.timer actif ; $REXSCOPE_BIN en place (sessions Rex plafonnées)" \
+    || warn "$BUILDCAPS_UNIT.timer non activé"
+}
+
 # ============================================================== ⑪ hooks =====
 # Chaque clone porte le hook post-commit : un commit sur N'IMPORTE quel nœud
 # pousse puis resynchronise toute la flotte (sync dans tous les sens). Pour
@@ -2239,6 +2298,7 @@ main() {
       claude-plugins) do_claude_plugins ;;
       moshi)     do_moshi ;;
       cleanup)   do_cleanup ;;
+      memcaps)   do_memcaps ;;
       hooks)     do_hooks ;;
       verify)    do_verify ;;
     esac
