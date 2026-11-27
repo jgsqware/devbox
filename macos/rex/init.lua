@@ -123,7 +123,16 @@ rex.bind("cmd+alt+j", "pane.focus.down")
 -- existe) : le petit pas y entre donc, puis déplace la vue. On en sort avec
 -- esc ; tant qu'on y est, les touches ne vont pas au programme du pane.
 -- Un programme plein écran sans historique (la liste du deck) ne défile pas.
+--
+-- Pane distant : l'entrée en mode copie n'y est pas immédiate, et un
+-- déplacement envoyé dans la foulée est perdu (le mode s'ouvre, rien ne
+-- défile). Les appuis suivants n'envoient donc que le déplacement, tant
+-- qu'ils se suivent à moins de SCROLL_KEEP secondes sur le même pane ; passé
+-- ce délai on repart de « entrer + déplacer » (on a pu sortir par esc).
+-- Sur un pane distant, le premier appui ouvre le mode, les suivants défilent.
 local SCROLL_STEP = 10
+local SCROLL_KEEP = 4
+local scroll_last = { block = nil, at = 0 }
 
 local function scroll_step(name, title, to)
   rex.action{
@@ -132,7 +141,10 @@ local function scroll_step(name, title, to)
     description = "Entre en mode copie et déplace la vue de " .. SCROLL_STEP .. " lignes.",
     keywords    = "scroll défiler historique lignes clavier",
     run = function(ctx, args)
-      rex.client.queue("pane.copy_mode.enter")
+      local now = os.time()
+      local again = scroll_last.block == ctx.block_id and now - scroll_last.at <= SCROLL_KEEP
+      scroll_last.block, scroll_last.at = ctx.block_id, now
+      if not again then rex.client.queue("pane.copy_mode.enter") end
       rex.client.queue("pane.copy_mode.move", { to = to, count = SCROLL_STEP })
     end,
   }
