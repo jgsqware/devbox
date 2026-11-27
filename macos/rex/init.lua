@@ -115,43 +115,56 @@ rex.bind("cmd+alt+l", "pane.focus.right")
 rex.bind("cmd+alt+k", "pane.focus.up")
 rex.bind("cmd+alt+j", "pane.focus.down")
 
--- Défiler l'historique du pane au clavier.
---   cmd+alt+u / cmd+alt+n       : SCROLL_STEP lignes vers le haut / le bas
---   cmd+alt+shift+u / shift+n   : une page entière
+-- Défiler un pane au clavier.
+--   cmd+alt+u / cmd+alt+n       : un pas vers le haut / le bas
+--   cmd+alt+shift+u / shift+n   : une page entière de l'historique
 --   cmd+alt+v                   : mode copie (curseur à la vim, recherche, copie)
--- Rex ne défile par petits pas qu'en mode copie (hors de lui, seule la page
--- existe) : le petit pas y entre donc, puis déplace la vue. On en sort avec
--- esc ; tant qu'on y est, les touches ne vont pas au programme du pane.
--- Un programme plein écran sans historique (la liste du deck) ne défile pas.
 --
--- Pane distant : l'entrée en mode copie n'y est pas immédiate, et un
--- déplacement envoyé dans la foulée est perdu (le mode s'ouvre, rien ne
--- défile). Les appuis suivants n'envoient donc que le déplacement, tant
--- qu'ils se suivent à moins de SCROLL_KEEP secondes sur le même pane ; passé
--- ce délai on repart de « entrer + déplacer » (on a pu sortir par esc).
--- Sur un pane distant, le premier appui ouvre le mode, les suivants défilent.
+-- Deux cas, selon ce qui tourne dans le pane :
+-- * un shell : Rex garde l'historique. Il ne défile par petits pas qu'en mode
+--   copie, donc le pas y entre puis déplace la vue de SCROLL_STEP lignes ;
+--   esc pour en sortir (tant qu'on y est, les touches ne vont pas au shell).
+-- * un programme plein écran (Claude Code, vim, less… : écran alternatif) :
+--   Rex n'a aucun historique à défiler, c'est le programme qui défile. Le pas
+--   lui envoie PageUp / PageDown.
 local SCROLL_STEP = 10
-local SCROLL_KEEP = 4
-local scroll_last = { block = nil, at = 0 }
 
-local function scroll_step(name, title, to)
+-- vrai si le programme du pane a pris l'écran alternatif (modes 47, 1047, 1049)
+local function full_screen(ctx)
+  if not (ctx.session_id and ctx.block_id) then return false end
+  local ok, r = pcall(function()
+    return host_api(ctx).call("block.method", { session_id = ctx.session_id, block_id = ctx.block_id, method = "modes" })
+  end)
+  if not ok or type(r) ~= "table" then return false end
+  local found = false
+  local function walk(t, depth)
+    if found or depth > 4 or type(t) ~= "table" then return end
+    if (t.number == 47 or t.number == 1047 or t.number == 1049) and t.set == true then found = true return end
+    for _, v in pairs(t) do walk(v, depth + 1) end
+  end
+  walk(r, 0)
+  return found
+end
+
+local function scroll_step(name, title, to, key)
   rex.action{
     name        = name,
     title       = title,
-    description = "Entre en mode copie et déplace la vue de " .. SCROLL_STEP .. " lignes.",
+    description = "Défile le pane d'un pas : " .. SCROLL_STEP .. " lignes d'historique, ou " .. key .. " pour un programme plein écran.",
     keywords    = "scroll défiler historique lignes clavier",
     run = function(ctx, args)
-      local now = os.time()
-      local again = scroll_last.block == ctx.block_id and now - scroll_last.at <= SCROLL_KEEP
-      scroll_last.block, scroll_last.at = ctx.block_id, now
-      if not again then rex.client.queue("pane.copy_mode.enter") end
+      if full_screen(ctx) then
+        rex.client.queue("pane.send_key", { key = key })
+        return
+      end
+      rex.client.queue("pane.copy_mode.enter")
       rex.client.queue("pane.copy_mode.move", { to = to, count = SCROLL_STEP })
     end,
   }
 end
 
-scroll_step("scroll_lines_up", "Scroll Lines Up", "scroll_up")
-scroll_step("scroll_lines_down", "Scroll Lines Down", "scroll_down")
+scroll_step("scroll_lines_up", "Scroll Lines Up", "scroll_up", "pageup")
+scroll_step("scroll_lines_down", "Scroll Lines Down", "scroll_down", "pagedown")
 
 rex.bind("cmd+alt+u", "scroll_lines_up")
 rex.bind("cmd+alt+n", "scroll_lines_down")
