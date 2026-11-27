@@ -115,12 +115,36 @@ rex.bind("cmd+alt+l", "pane.focus.right")
 rex.bind("cmd+alt+k", "pane.focus.up")
 rex.bind("cmd+alt+j", "pane.focus.down")
 
--- Défiler l'historique du pane au clavier : cmd+alt+u remonte d'une page,
--- cmd+alt+n redescend ; cmd+alt+v entre en mode copie (curseur à la vim dans
--- l'historique, recherche, copie). Un programme plein écran sans historique
--- (la liste du deck) ne défile pas avec.
-rex.bind("cmd+alt+u", "client.scroll.page_up")
-rex.bind("cmd+alt+n", "client.scroll.page_down")
+-- Défiler l'historique du pane au clavier.
+--   cmd+alt+u / cmd+alt+n       : SCROLL_STEP lignes vers le haut / le bas
+--   cmd+alt+shift+u / shift+n   : une page entière
+--   cmd+alt+v                   : mode copie (curseur à la vim, recherche, copie)
+-- Rex ne défile par petits pas qu'en mode copie (hors de lui, seule la page
+-- existe) : le petit pas y entre donc, puis déplace la vue. On en sort avec
+-- esc ; tant qu'on y est, les touches ne vont pas au programme du pane.
+-- Un programme plein écran sans historique (la liste du deck) ne défile pas.
+local SCROLL_STEP = 10
+
+local function scroll_step(name, title, to)
+  rex.action{
+    name        = name,
+    title       = title,
+    description = "Entre en mode copie et déplace la vue de " .. SCROLL_STEP .. " lignes.",
+    keywords    = "scroll défiler historique lignes clavier",
+    run = function(ctx, args)
+      rex.client.queue("pane.copy_mode.enter")
+      rex.client.queue("pane.copy_mode.move", { to = to, count = SCROLL_STEP })
+    end,
+  }
+end
+
+scroll_step("scroll_lines_up", "Scroll Lines Up", "scroll_up")
+scroll_step("scroll_lines_down", "Scroll Lines Down", "scroll_down")
+
+rex.bind("cmd+alt+u", "scroll_lines_up")
+rex.bind("cmd+alt+n", "scroll_lines_down")
+rex.bind("cmd+alt+shift+u", "client.scroll.page_up")
+rex.bind("cmd+alt+shift+n", "client.scroll.page_down")
 rex.bind("cmd+alt+v", "pane.copy_mode.enter")
 
 -- ---------------------------------------------------------------------------
