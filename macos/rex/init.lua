@@ -105,6 +105,17 @@ rex.bind("cmd+shift+f", "new_floating_pane")
 rex.bind("cmd+shift+b", "bitwarden_search")
 
 -- ---------------------------------------------------------------------------
+-- Changer de pane à la vim : cmd+alt+h/j/k/l, en plus de cmd+alt+flèche.
+-- Sert surtout au deck d'ov : cmd+alt+h → la liste, cmd+alt+l → l'agent.
+-- Côté client seulement (ce fichier n'est posé que sur les Mac).
+-- macOS : cmd+alt+h est aussi « Masquer les autres » ; s'il prend la touche,
+-- le désactiver dans Réglages Système › Clavier › Raccourcis.
+rex.bind("cmd+alt+h", "pane.focus.left")
+rex.bind("cmd+alt+l", "pane.focus.right")
+rex.bind("cmd+alt+k", "pane.focus.up")
+rex.bind("cmd+alt+j", "pane.focus.down")
+
+-- ---------------------------------------------------------------------------
 -- ov : cmd+shift+o → onglet de la console ov (locale ou sur un host).
 -- Source de vérité : dépôt jgsqware/ov (contrib/rex/goto_ov.lua). Cherché dans
 -- le checkout de dev ($OV_DIR, sinon ~/code/ov, celui de `mise run ov`), puis
