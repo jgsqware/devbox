@@ -115,6 +115,14 @@ rex.bind("cmd+alt+l", "pane.focus.right")
 rex.bind("cmd+alt+k", "pane.focus.up")
 rex.bind("cmd+alt+j", "pane.focus.down")
 
+-- Défiler l'historique du pane au clavier : cmd+alt+u remonte d'une page,
+-- cmd+alt+n redescend ; cmd+alt+v entre en mode copie (curseur à la vim dans
+-- l'historique, recherche, copie). Un programme plein écran sans historique
+-- (la liste du deck) ne défile pas avec.
+rex.bind("cmd+alt+u", "client.scroll.page_up")
+rex.bind("cmd+alt+n", "client.scroll.page_down")
+rex.bind("cmd+alt+v", "pane.copy_mode.enter")
+
 -- ---------------------------------------------------------------------------
 -- ov : cmd+shift+o → onglet de la console ov (locale ou sur un host).
 -- Source de vérité : dépôt jgsqware/ov (contrib/rex/goto_ov.lua). Cherché dans
